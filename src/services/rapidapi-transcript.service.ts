@@ -7,16 +7,14 @@ export interface RapidAPIConfig {
 }
 
 interface RapidAPIResponse {
-  success: boolean;
-  data?: {
-    transcript: Array<{
-      text: string;
-      start: number;
-      duration: number;
-    }>;
-    language?: string;
-    video_id: string;
-  };
+  success?: boolean;
+  transcript?: Array<{
+    text: string;
+    start: number;
+    duration: number;
+  }>;
+  language?: string;
+  video_id?: string;
   error?: string;
   message?: string;
 }
@@ -41,8 +39,8 @@ export class RapidAPITranscriptService {
       
       const response = await this.makeAPIRequest(videoId);
       
-      if (!response.success || !response.data) {
-        throw new Error(response.error || response.message || 'Failed to fetch transcript');
+      if (!response.transcript || response.transcript.length === 0) {
+        throw new Error(response.error || response.message || 'No transcript data received');
       }
 
       const transcript = this.parseAPIResponse(response, videoId);
@@ -62,7 +60,7 @@ export class RapidAPITranscriptService {
         // Try once more after rate limit wait
         try {
           const retryResponse = await this.makeAPIRequest(videoId);
-          if (retryResponse.success && retryResponse.data) {
+          if (retryResponse.transcript && retryResponse.transcript.length > 0) {
             return this.parseAPIResponse(retryResponse, videoId);
           }
         } catch (retryError) {
@@ -78,19 +76,14 @@ export class RapidAPITranscriptService {
    * Make HTTP request to RapidAPI
    */
   private async makeAPIRequest(videoId: string): Promise<RapidAPIResponse> {
-    const url = `https://${this.config.host}/transcript`;
+    const url = `https://${this.config.host}/api/transcript?videoId=${videoId}`;
     
     const response = await fetch(url, {
-      method: 'POST',
+      method: 'GET',
       headers: {
         'X-RapidAPI-Key': this.config.apiKey,
         'X-RapidAPI-Host': this.config.host,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        video_id: videoId,
-        format: 'json'
-      })
+      }
     });
 
     if (!response.ok) {
@@ -105,8 +98,7 @@ export class RapidAPITranscriptService {
    * Parse RapidAPI response to our WhisperTranscript format
    */
   private parseAPIResponse(response: RapidAPIResponse, videoId: string): WhisperTranscript {
-    const data = response.data!;
-    const transcriptArray = data.transcript || [];
+    const transcriptArray = response.transcript || [];
     
     // Convert to our segment format
     const segments: WhisperSegment[] = transcriptArray.map((item, index) => ({
@@ -127,7 +119,7 @@ export class RapidAPITranscriptService {
     return {
       text: fullText,
       segments,
-      language: data.language || 'unknown',
+      language: response.language || 'unknown',
       duration: totalDuration,
       source: 'youtube-auto', // RapidAPI typically returns auto-generated transcripts
       qualityScore: this.calculateQualityScore(fullText, segments.length, totalDuration)
