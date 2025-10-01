@@ -16,6 +16,9 @@ export interface OrchestratorConfig {
   similarityThreshold?: number;
   lookbackHours?: number;
   dryRun?: boolean;
+  rapidApiKey?: string;
+  rapidApiHost?: string;
+  rapidApiRateLimit?: number;
 }
 
 export interface RunStats {
@@ -50,7 +53,10 @@ export class OrchestratorService {
     this.youtubeService = new YouTubeService(config.youtubeApiKey);
     this.transcriptProcessor = new TranscriptProcessor(
       config.openaiApiKey,
-      config.maxTranscriptionMinutes || 180
+      config.maxTranscriptionMinutes || 180,
+      config.rapidApiKey,
+      config.rapidApiHost,
+      config.rapidApiRateLimit
     );
     this.itemProcessor = new ItemProcessor(config.openaiApiKey);
     this.dedupProcessor = new DedupProcessor(config.openaiApiKey);

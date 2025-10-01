@@ -23,8 +23,14 @@ export class TranscriptProcessor {
   private whisperService: WhisperService;
   private db;
 
-  constructor(openaiApiKey: string, maxWhisperMinutes: number = 180) {
-    this.whisperService = new WhisperService(openaiApiKey, maxWhisperMinutes);
+  constructor(openaiApiKey: string, maxWhisperMinutes: number = 180, rapidApiKey?: string, rapidApiHost?: string, rapidApiRateLimit?: number) {
+    const rapidApiConfig = rapidApiKey && rapidApiHost ? {
+      apiKey: rapidApiKey,
+      host: rapidApiHost,
+      rateLimit: rapidApiRateLimit || 10
+    } : undefined;
+    
+    this.whisperService = new WhisperService(openaiApiKey, maxWhisperMinutes, rapidApiConfig);
     this.db = getDatabase();
   }
 

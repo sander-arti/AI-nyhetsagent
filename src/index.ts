@@ -11,7 +11,10 @@ async function main() {
     maxTranscriptionMinutes: parseInt(process.env.MAX_TRANSCRIPTION_MINUTES || '180'),
     similarityThreshold: parseFloat(process.env.SIMILARITY_THRESHOLD || '0.85'),
     lookbackHours: parseInt(process.env.LOOKBACK_HOURS || '24'),
-    dryRun: process.env.DRY_RUN === 'true'
+    dryRun: process.env.DRY_RUN === 'true',
+    rapidApiKey: process.env.RAPIDAPI_KEY,
+    rapidApiHost: process.env.RAPIDAPI_HOST,
+    rapidApiRateLimit: parseInt(process.env.RAPIDAPI_RATE_LIMIT || '10')
   };
 
   // Validate required environment variables

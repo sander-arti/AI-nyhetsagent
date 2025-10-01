@@ -5,6 +5,7 @@ import { execSync, spawn } from 'child_process';
 import YTDlpWrap from 'yt-dlp-wrap';
 // @ts-ignore - youtube-transcript has inconsistent types
 const youtubeTranscript = require('youtube-transcript');
+import { RapidAPITranscriptService, RapidAPIConfig } from './rapidapi-transcript.service.js';
 
 export interface WhisperTranscript {
   text: string;
@@ -28,11 +29,17 @@ export class WhisperService {
   private maxDurationMinutes: number;
   private tempDir: string;
   private totalMinutesUsed: number = 0;
+  private rapidApiService: RapidAPITranscriptService | null = null;
 
-  constructor(apiKey: string, maxDurationMinutes: number = 180) {
+  constructor(apiKey: string, maxDurationMinutes: number = 180, rapidApiConfig?: RapidAPIConfig) {
     this.openai = new OpenAI({ apiKey });
     this.maxDurationMinutes = maxDurationMinutes;
     this.tempDir = path.join(process.cwd(), 'temp');
+    
+    // Initialize RapidAPI service if config provided
+    if (rapidApiConfig) {
+      this.rapidApiService = new RapidAPITranscriptService(rapidApiConfig);
+    }
     
     // Ensure temp directory exists
     if (!fs.existsSync(this.tempDir)) {
@@ -41,10 +48,10 @@ export class WhisperService {
   }
 
   /**
-   * Transcribe a YouTube video using three-tier fallback system:
-   * 1. Whisper API (preferred)
-   * 2. Python youtube-transcript-api (fallback for bot detection)
-   * 3. Node.js youtube-transcript (final fallback)
+   * Transcribe a YouTube video using multi-tier system:
+   * 1. RapidAPI YouTube Transcript (preferred - works in cloud)
+   * 2. Whisper API (fallback - high quality but blocked in cloud)
+   * 3. Python youtube-transcript-api (fallback for local development)
    */
   async transcribeVideo(videoId: string, videoTitle: string = '', videoDuration: number = 0): Promise<WhisperTranscript | null> {
     // Check if we've exceeded duration limit
@@ -56,9 +63,30 @@ export class WhisperService {
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const audioPath = path.join(this.tempDir, `${videoId}.m4a`);
     
-    // TIER 1: Try Whisper API (preferred)
+    // TIER 1: Try RapidAPI YouTube Transcript (preferred - works in cloud)
+    if (this.rapidApiService) {
+      try {
+        console.log(`🚀 Tier 1: Attempting RapidAPI transcript for: ${videoTitle || videoId}`);
+        const rapidTranscript = await this.rapidApiService.fetchTranscript(videoId, videoTitle);
+        
+        if (rapidTranscript) {
+          console.log(`✅ RapidAPI transcription successful (${rapidTranscript.source})`);
+          return rapidTranscript;
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.warn(`⚠ Tier 1 (RapidAPI) failed for ${videoId}: ${errorMessage}`);
+      }
+    }
+
+    // TIER 2: Try Whisper API (fallback - high quality but blocked in cloud)
     try {
-      console.log(`🎧 Tier 1: Attempting Whisper transcription for: ${videoTitle || videoId}`);
+      console.log(`🎧 Tier 2: Attempting Whisper transcription for: ${videoTitle || videoId}`);
+      
+      // Check if we've exceeded duration limit
+      if (this.totalMinutesUsed >= this.maxDurationMinutes) {
+        throw new Error(`Whisper quota exceeded (${this.totalMinutesUsed}/${this.maxDurationMinutes} minutes)`);
+      }
       
       // Download audio from YouTube
       await this.downloadAudio(videoUrl, audioPath);
@@ -91,7 +119,8 @@ export class WhisperService {
       return transcript;
 
     } catch (error) {
-      console.warn(`⚠ Tier 1 failed for ${videoId}: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn(`⚠ Tier 2 (Whisper) failed for ${videoId}: ${errorMessage}`);
       
       // Clean up on error
       if (fs.existsSync(audioPath)) {
@@ -99,7 +128,7 @@ export class WhisperService {
       }
       
       // Check if error indicates bot detection
-      const errorMsg = error.message.toLowerCase();
+      const errorMsg = errorMessage.toLowerCase();
       const isBotDetection = errorMsg.includes('bot') || 
                            errorMsg.includes('sign in') || 
                            errorMsg.includes('confirm') ||
@@ -110,28 +139,17 @@ export class WhisperService {
       }
     }
 
-    // TIER 2: Try Python youtube-transcript-api
+    // TIER 3: Try Python youtube-transcript-api (for local development)
     try {
-      console.log(`🐍 Tier 2: Attempting Python transcript fetch for: ${videoId}`);
+      console.log(`🐍 Tier 3: Attempting Python transcript fetch for: ${videoId}`);
       const pythonTranscript = await this.fetchTranscriptPython(videoId);
       if (pythonTranscript) {
         console.log(`✅ Python transcript fetch successful (${pythonTranscript.source})`);
         return pythonTranscript;
       }
     } catch (error) {
-      console.warn(`⚠ Tier 2 failed for ${videoId}: ${error.message}`);
-    }
-
-    // TIER 3: Try Node.js youtube-transcript
-    try {
-      console.log(`📦 Tier 3: Attempting Node.js transcript fetch for: ${videoId}`);
-      const nodeTranscript = await this.fetchTranscriptNode(videoId, videoDuration);
-      if (nodeTranscript) {
-        console.log(`✅ Node.js transcript fetch successful`);
-        return nodeTranscript;
-      }
-    } catch (error) {
-      console.warn(`⚠ Tier 3 failed for ${videoId}: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn(`⚠ Tier 3 (Python) failed for ${videoId}: ${errorMessage}`);
     }
 
     console.error(`❌ All transcription methods failed for ${videoId}`);
@@ -348,7 +366,7 @@ export class WhisperService {
   }
 
   /**
-   * TIER 2: Fetch transcript using Python youtube-transcript-api
+   * TIER 3: Fetch transcript using Python youtube-transcript-api
    */
   private async fetchTranscriptPython(videoId: string): Promise<WhisperTranscript | null> {
     return new Promise((resolve, reject) => {
@@ -400,46 +418,6 @@ export class WhisperService {
     });
   }
 
-  /**
-   * TIER 3: Fetch transcript using Node.js youtube-transcript package
-   */
-  private async fetchTranscriptNode(videoId: string, videoDuration: number): Promise<WhisperTranscript | null> {
-    try {
-      // Use the correct YoutubeTranscript API
-      const transcript = await youtubeTranscript.YoutubeTranscript.fetchTranscript(videoId);
-      
-      if (!transcript || transcript.length === 0) {
-        throw new Error('No transcript returned');
-      }
-
-      // Convert to our format
-      const segments = transcript.map((item: any, index: number) => ({
-        id: index,
-        start: item.offset / 1000, // Convert ms to seconds
-        end: (item.offset + item.duration) / 1000,
-        text: item.text
-      }));
-
-      const fullText = transcript.map((item: any) => item.text).join(' ');
-      
-      // Estimate duration from last segment if not provided
-      const estimatedDuration = videoDuration || 
-        (transcript.length > 0 ? (transcript[transcript.length - 1].offset + transcript[transcript.length - 1].duration) / 1000 : 0);
-
-      return {
-        text: fullText,
-        segments,
-        language: 'unknown', // Node.js package doesn't provide language info
-        duration: estimatedDuration,
-        source: 'youtube-auto', // Assume auto-generated
-        qualityScore: this.calculateYouTubeQualityScore(fullText, true)
-      };
-
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Node.js transcript fetch failed: ${errorMessage}`);
-    }
-  }
 
   /**
    * Calculate quality score for YouTube transcripts
