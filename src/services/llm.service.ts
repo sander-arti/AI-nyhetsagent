@@ -102,7 +102,7 @@ export class LLMService {
     
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i];
-      if (!segment || !segment.text) {
+      if (!segment || !segment.text || typeof segment.text !== 'string') {
         console.warn(`⚠️ Invalid segment at index ${i}:`, segment);
         continue;
       }
@@ -118,11 +118,12 @@ export class LLMService {
         
         // Start new chunk with overlap
         const overlapStart = Math.max(0, i - Math.floor(segments.length * overlapForType));
+        const overlapSegments = segments.slice(overlapStart, i + 1).filter(s => s && s.text && typeof s.text === 'string');
         currentChunk = {
-          text: segments.slice(overlapStart, i + 1).map(s => s.text).join(' '),
-          startTime: segments[overlapStart].start,
-          endTime: segment.end,
-          wordCount: segments.slice(overlapStart, i + 1).reduce((acc, s) => acc + s.text.split(' ').length, 0),
+          text: overlapSegments.map(s => s.text).join(' '),
+          startTime: segments[overlapStart]?.start || 0,
+          endTime: segment.end || 0,
+          wordCount: overlapSegments.reduce((acc, s) => acc + s.text.split(' ').length, 0),
           hasTopicShift: this.detectTopicShift(segments[i - 1]?.text, segment.text)
         };
       } else {
@@ -257,8 +258,9 @@ export class LLMService {
       return JSON.parse(content);
 
     } catch (error) {
-      console.error('❌ Chunk processing failed:', error);
-      return { items: [], error: error.message };
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('❌ Chunk processing failed:', errorMessage);
+      return { items: [], error: errorMessage };
     }
   }
 
@@ -317,9 +319,10 @@ KRITISKE REGLER:
 - Hvis ingen entiteter er klart nevnt, bruk tom array []
 - Bruk eksakte type-verdier: release, tool, policy, research, acquisition, funding, other
 
-FORMAT-KRAV:
+STRENGE FORMAT-KRAV:
 - title: 10-150 tegn (vær beskrivende og konkret)
-- summary: 50-400 tegn (detaljert og spesifikk, ikke vag)
+- summary: 50-250 tegn (MAKS 250 tegn - kort og presist)
+- relevance_score: ALLTID inkluder som heltall 1-10
 - Hold alle tekstfelt innenfor disse strenge grensene`;
 
     const specific = {
@@ -340,18 +343,19 @@ Eksempel god summary: "OpenAI lanserer ChatGPT Canvas-modus med split-screen edi
 
       debate: `
 FOKUS PÅ: Diskusjonstemaer, forskjellige synspunkter, argumenter, konsekvenser
-EKSTRAHER: topic (10-120 tegn på norsk), whatWasDiscussed (50-500 tegn med SPESIFIKK innhold), pro/contra posisjoner, nøkkelsitater med kontekst, implications (20-400 tegn)
+EKSTRAHER: topic (10-120 tegn på norsk), whatWasDiscussed (50-400 tegn med SPESIFIKK innhold), pro/contra posisjoner, nøkkelsitater med kontekst, implications (20-300 tegn)
 Fang nyansene i forskjellige perspektiver og HVORFOR temaet betyr noe.
 Vær KONKRET om hva som faktisk ble diskutert - ikke vag om "diverse synspunkter". Inkluder spesifikke argumenter, eksempler og sitater.
 
 PÅKREVDE FELTER for debate-items:
 - positions: ALLTID inkluder objekt med {"pro": [], "contra": []} arrays. Hvis ingen argumenter nevnt, bruk tomme arrays.
 - keyQuotes: ALLTID inkluder array med sitater. Hvis ingen sitater, bruk tom array [].
-- Hvert sitat må ha: quote, timestamp (HH:MM:SS format), og eventuelt speaker og context.`,
+- Hvert sitat må ha: quote, timestamp (HH:MM:SS format), og eventuelt speaker og context.
+- relevance_score: ALLTID inkluder som heltall 1-10`,
 
       dev: `
 FOKUS PÅ: Verktøylanseringer, API-endringer, tutorials, kodeeksempler, utviklerressurser
-EKSTRAHER: title (10-150 tegn på norsk), whatChanged (20-400 tegn med SPESIFIKKE detaljer), hvordan det påvirker utviklere, nødvendige handlinger, lenker/ressurser nevnt
+EKSTRAHER: title (10-150 tegn på norsk), whatChanged (20-300 tegn med SPESIFIKKE detaljer), hvordan det påvirker utviklere, nødvendige handlinger, lenker/ressurser nevnt
 Prioriter KONKRET informasjon utviklere kan bruke umiddelbart. 
 Inkluder versjonnumre, nye metoder/funksjoner, breaking changes, installasjonsinstruksjoner, API-endepunkt hvis nevnt.
 Eksempel: "GitHub Copilot får nye @workspace kommando som lar deg referere hele prosjektet. Tilgjengelig i VS Code 1.85+ via Copilot Chat panel."
@@ -359,7 +363,9 @@ Eksempel: "GitHub Copilot får nye @workspace kommando som lar deg referere hele
 PÅKREVDE FELTER for dev-items:
 - changeType: ALLTID spesifiser en av: release, breaking, feature, tutorial, tool, api, framework, library
 - developerAction: ALLTID spesifiser en av: try, update, evaluate, migrate, test, learn
-- links: ALLTID inkluder array med URL-er nevnt i videoen. Hvis ingen lenker nevnt, bruk tom array [].`
+- whatChanged: ALLTID inkluder spesifikke detaljer om hva som er nytt/endret (20-300 tegn)
+- links: ALLTID inkluder array med URL-er nevnt i videoen. Hvis ingen lenker nevnt, bruk tom array []
+- relevance_score: ALLTID inkluder som heltall 1-10`
     };
 
     return base + specific[sourceType];
