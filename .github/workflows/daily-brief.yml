@@ -23,6 +23,12 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
+    - name: Start ChromaDB
+      run: |
+        docker run -d --name chromadb -p 8000:8000 chromadb/chroma:latest
+        # Wait for ChromaDB to be ready
+        sleep 10
+
     - name: Run AI Brief Pipeline
       env:
         YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
@@ -36,8 +42,14 @@ jobs:
         MAX_ITEMS_PART2: 6
         MAX_ITEMS_PART3: 8
         TZ: Europe/Oslo
-        NODE_ENV: production
-      run: npx tsx src/index.ts
+        NODE_ENV: github-actions
+        SQLITE_DB_PATH: ./ai-agent.sqlite3
+      run: |
+        # Create data directory and initialize database
+        mkdir -p data
+        npx tsx scripts/migrate.ts
+        npx tsx src/db/seed-sources.ts
+        npx tsx src/index.ts
 
     - name: Upload logs on failure
       if: failure()

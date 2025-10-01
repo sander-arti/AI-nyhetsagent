@@ -2,7 +2,7 @@ import 'dotenv/config';
 
 export const dbConfig = {
   // Environment-based database selection
-  type: process.env.NODE_ENV === 'production' ? 'postgres' : 'sqlite',
+  type: process.env.NODE_ENV === 'production' && process.env.DB_HOST ? 'postgres' : 'sqlite',
   
   // SQLite config (development)
   sqlite: {
