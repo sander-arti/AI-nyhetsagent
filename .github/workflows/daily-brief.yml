@@ -41,6 +41,8 @@ jobs:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
         SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+        RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
+        RAPIDAPI_HOST: ${{ secrets.RAPIDAPI_HOST }}
         LOOKBACK_HOURS: 24
         MAX_TRANSCRIPTION_MINUTES: 180
         SIMILARITY_THRESHOLD: 0.85
