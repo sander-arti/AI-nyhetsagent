@@ -3,7 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { execSync, spawn } from 'child_process';
 import YTDlpWrap from 'yt-dlp-wrap';
-import youtubeTranscript from 'youtube-transcript';
+// @ts-ignore - youtube-transcript has inconsistent types
+const youtubeTranscript = require('youtube-transcript');
 
 export interface WhisperTranscript {
   text: string;
@@ -385,10 +386,11 @@ export class WhisperService {
               reject(new Error(result.message || 'Python transcript fetch failed'));
             }
           } catch (parseError) {
-            reject(new Error(`Failed to parse Python response: ${parseError.message}`));
+            const errorMsg = parseError instanceof Error ? parseError.message : String(parseError);
+            reject(new Error(`Failed to parse Python response: ${errorMsg}. Raw output: ${stdout.substring(0, 200)}...`));
           }
         } else {
-          reject(new Error(`Python process failed (code ${code}): ${stderr || 'Unknown error'}`));
+          reject(new Error(`Python process failed (code ${code}). Stderr: ${stderr || 'No stderr'}. Stdout: ${stdout || 'No stdout'}`));
         }
       });
 
@@ -403,21 +405,22 @@ export class WhisperService {
    */
   private async fetchTranscriptNode(videoId: string, videoDuration: number): Promise<WhisperTranscript | null> {
     try {
-      const transcript = await youtubeTranscript.YouTubeTranscript.fetchTranscript(videoId);
+      // Use the correct YoutubeTranscript API
+      const transcript = await youtubeTranscript.YoutubeTranscript.fetchTranscript(videoId);
       
       if (!transcript || transcript.length === 0) {
         throw new Error('No transcript returned');
       }
 
       // Convert to our format
-      const segments = transcript.map((item, index) => ({
+      const segments = transcript.map((item: any, index: number) => ({
         id: index,
         start: item.offset / 1000, // Convert ms to seconds
         end: (item.offset + item.duration) / 1000,
         text: item.text
       }));
 
-      const fullText = transcript.map(item => item.text).join(' ');
+      const fullText = transcript.map((item: any) => item.text).join(' ');
       
       // Estimate duration from last segment if not provided
       const estimatedDuration = videoDuration || 
@@ -433,7 +436,8 @@ export class WhisperService {
       };
 
     } catch (error) {
-      throw new Error(`Node.js transcript fetch failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Node.js transcript fetch failed: ${errorMessage}`);
     }
   }
 
