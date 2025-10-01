@@ -1,0 +1,41 @@
+{
+  "name": "ai-nyhetsagent",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "tsx src/db/seed-sources.ts",
+    "test": "vitest",
+    "test:full": "tsx scripts/test-full-pipeline.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/eslint": "^9.6.1",
+    "@types/node": "^24.5.2",
+    "eslint": "^9.36.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@chroma-core/default-embed": "^0.1.8",
+    "@slack/web-api": "^7.10.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/pg": "^8.15.5",
+    "better-sqlite3": "^12.4.1",
+    "chromadb": "^3.0.15",
+    "dotenv": "^17.2.2",
+    "googleapis": "^160.0.0",
+    "openai": "^5.23.1",
+    "pg": "^8.16.3",
+    "yt-dlp-wrap": "^2.3.12",
+    "zod": "^3.25.76"
+  }
+}
