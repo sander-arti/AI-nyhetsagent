@@ -310,6 +310,128 @@ export class YouTubeService {
   }
 
   /**
+   * Get captions for a video
+   */
+  async getCaptions(videoId: string): Promise<{
+    text: string;
+    segments: Array<{ start: number; end: number; text: string }>;
+    language: string;
+    source: 'youtube-captions';
+  } | null> {
+    try {
+      this.quotaUsed += 1; // captions.list costs 1 unit
+
+      const response = await this.youtube.captions.list({
+        part: ['id', 'snippet'],
+        videoId: videoId,
+      });
+
+      const captions = response.data.items;
+      if (!captions || captions.length === 0) {
+        return null;
+      }
+
+      // Prefer auto-generated captions in English
+      let selectedCaption = captions.find(cap => 
+        cap.snippet?.language === 'en' && cap.snippet?.trackKind === 'asr'
+      ) || captions.find(cap => 
+        cap.snippet?.language === 'en'
+      ) || captions[0];
+
+      if (!selectedCaption?.id) {
+        return null;
+      }
+
+      // Download caption content
+      this.quotaUsed += 1; // captions.download costs 1 unit
+      
+      const downloadResponse = await this.youtube.captions.download({
+        id: selectedCaption.id,
+        tfmt: 'vtt' // WebVTT format with timestamps
+      });
+
+      if (!downloadResponse.data) {
+        return null;
+      }
+
+      // Parse VTT format
+      const vttContent = downloadResponse.data as string;
+      const parsed = this.parseVTTCaptions(vttContent);
+
+      return {
+        text: parsed.text,
+        segments: parsed.segments,
+        language: selectedCaption.snippet?.language || 'en',
+        source: 'youtube-captions'
+      };
+
+    } catch (error) {
+      console.warn(`Could not get captions for video ${videoId}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Parse VTT captions format
+   */
+  private parseVTTCaptions(vttContent: string): {
+    text: string;
+    segments: Array<{ start: number; end: number; text: string }>;
+  } {
+    const lines = vttContent.split('\n');
+    const segments: Array<{ start: number; end: number; text: string }> = [];
+    let fullText = '';
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // Look for timestamp lines (e.g., "00:00:01.000 --> 00:00:03.000")
+      const timestampMatch = line.match(/^(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})/);
+      if (timestampMatch && i + 1 < lines.length) {
+        const startTime = this.parseVTTTimestamp(timestampMatch[1]);
+        const endTime = this.parseVTTTimestamp(timestampMatch[2]);
+        
+        // Get the caption text (next line)
+        let captionText = '';
+        let j = i + 1;
+        while (j < lines.length && lines[j].trim() && !lines[j].includes('-->')) {
+          captionText += lines[j].trim() + ' ';
+          j++;
+        }
+        
+        captionText = captionText.trim();
+        if (captionText) {
+          segments.push({
+            start: startTime,
+            end: endTime,
+            text: captionText
+          });
+          fullText += captionText + ' ';
+        }
+        
+        i = j - 1; // Skip processed lines
+      }
+    }
+
+    return {
+      text: fullText.trim(),
+      segments
+    };
+  }
+
+  /**
+   * Parse VTT timestamp to seconds
+   */
+  private parseVTTTimestamp(timestamp: string): number {
+    const parts = timestamp.split(':');
+    const hours = parseInt(parts[0]);
+    const minutes = parseInt(parts[1]);
+    const seconds = parseFloat(parts[2]);
+    
+    return hours * 3600 + minutes * 60 + seconds;
+  }
+
+  /**
    * Parse ISO 8601 duration (PT4M13S) to seconds
    */
   private parseDuration(isoDuration: string): number {

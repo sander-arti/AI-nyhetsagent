@@ -49,7 +49,8 @@ export class OrchestratorService {
     this.config = config;
     this.youtubeService = new YouTubeService(config.youtubeApiKey);
     this.transcriptProcessor = new TranscriptProcessor(
-      config.openaiApiKey, 
+      config.openaiApiKey,
+      config.youtubeApiKey,
       config.maxTranscriptionMinutes || 180
     );
     this.itemProcessor = new ItemProcessor(config.openaiApiKey);
