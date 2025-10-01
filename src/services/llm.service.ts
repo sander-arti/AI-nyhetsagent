@@ -351,6 +351,7 @@ PÅKREVDE FELTER for debate-items:
 - positions: ALLTID inkluder objekt med {"pro": [], "contra": []} arrays. Hvis ingen argumenter nevnt, bruk tomme arrays.
 - keyQuotes: ALLTID inkluder array med sitater. Hvis ingen sitater, bruk tom array [].
 - Hvert sitat må ha: quote, timestamp (HH:MM:SS format), og eventuelt speaker og context.
+- rawContext: ALLTID inkluder eksakt tekst-utdrag fra transkripsjonen som støtter denne debatten
 - relevance_score: ALLTID inkluder som heltall 1-10`,
 
       dev: `
@@ -361,10 +362,11 @@ Inkluder versjonnumre, nye metoder/funksjoner, breaking changes, installasjonsin
 Eksempel: "GitHub Copilot får nye @workspace kommando som lar deg referere hele prosjektet. Tilgjengelig i VS Code 1.85+ via Copilot Chat panel."
 
 PÅKREVDE FELTER for dev-items:
-- changeType: ALLTID spesifiser en av: release, breaking, feature, tutorial, tool, api, framework, library
+- changeType: ALLTID spesifiser en av: release, breaking, feature, tutorial, tool, api, framework, library (IKKE bruk 'policy')
 - developerAction: ALLTID spesifiser en av: try, update, evaluate, migrate, test, learn
 - whatChanged: ALLTID inkluder spesifikke detaljer om hva som er nytt/endret (20-300 tegn)
 - links: ALLTID inkluder array med URL-er nevnt i videoen. Hvis ingen lenker nevnt, bruk tom array []
+- rawContext: ALLTID inkluder eksakt tekst-utdrag fra transkripsjonen
 - relevance_score: ALLTID inkluder som heltall 1-10`
     };
 
