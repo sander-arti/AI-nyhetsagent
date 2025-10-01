@@ -35,6 +35,7 @@
     "googleapis": "^160.0.0",
     "openai": "^5.23.1",
     "pg": "^8.16.3",
+    "youtube-transcript": "^1.2.1",
     "yt-dlp-wrap": "^2.3.12",
     "zod": "^3.25.76"
   }

@@ -1,15 +1,17 @@
 import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import YTDlpWrap from 'yt-dlp-wrap';
+import youtubeTranscript from 'youtube-transcript';
 
 export interface WhisperTranscript {
   text: string;
   segments?: WhisperSegment[];
   language: string;
   duration: number;
-  source: 'whisper';
+  source: 'whisper' | 'youtube-auto' | 'youtube-manual';
+  qualityScore?: number;
 }
 
 export interface WhisperSegment {
@@ -38,7 +40,10 @@ export class WhisperService {
   }
 
   /**
-   * Transcribe a YouTube video using Whisper API
+   * Transcribe a YouTube video using three-tier fallback system:
+   * 1. Whisper API (preferred)
+   * 2. Python youtube-transcript-api (fallback for bot detection)
+   * 3. Node.js youtube-transcript (final fallback)
    */
   async transcribeVideo(videoId: string, videoTitle: string = '', videoDuration: number = 0): Promise<WhisperTranscript | null> {
     // Check if we've exceeded duration limit
@@ -50,8 +55,9 @@ export class WhisperService {
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const audioPath = path.join(this.tempDir, `${videoId}.m4a`);
     
+    // TIER 1: Try Whisper API (preferred)
     try {
-      console.log(`🎧 Downloading audio for: ${videoTitle || videoId}`);
+      console.log(`🎧 Tier 1: Attempting Whisper transcription for: ${videoTitle || videoId}`);
       
       // Download audio from YouTube
       await this.downloadAudio(videoUrl, audioPath);
@@ -75,7 +81,7 @@ export class WhisperService {
       const durationMinutes = videoDuration / 60;
       this.totalMinutesUsed += durationMinutes;
       
-      console.log(`✅ Transcription complete (${durationMinutes.toFixed(1)} min)`);
+      console.log(`✅ Whisper transcription complete (${durationMinutes.toFixed(1)} min)`);
       console.log(`📊 Whisper usage: ${this.totalMinutesUsed.toFixed(1)}/${this.maxDurationMinutes} minutes`);
       
       // Clean up temp file
@@ -84,15 +90,51 @@ export class WhisperService {
       return transcript;
 
     } catch (error) {
-      console.error(`❌ Transcription failed for ${videoId}:`, error);
+      console.warn(`⚠ Tier 1 failed for ${videoId}: ${error.message}`);
       
       // Clean up on error
       if (fs.existsSync(audioPath)) {
         fs.unlinkSync(audioPath);
       }
       
-      return null;
+      // Check if error indicates bot detection
+      const errorMsg = error.message.toLowerCase();
+      const isBotDetection = errorMsg.includes('bot') || 
+                           errorMsg.includes('sign in') || 
+                           errorMsg.includes('confirm') ||
+                           errorMsg.includes('blocked');
+      
+      if (isBotDetection) {
+        console.log(`🤖 Bot detection detected, trying fallback methods...`);
+      }
     }
+
+    // TIER 2: Try Python youtube-transcript-api
+    try {
+      console.log(`🐍 Tier 2: Attempting Python transcript fetch for: ${videoId}`);
+      const pythonTranscript = await this.fetchTranscriptPython(videoId);
+      if (pythonTranscript) {
+        console.log(`✅ Python transcript fetch successful (${pythonTranscript.source})`);
+        return pythonTranscript;
+      }
+    } catch (error) {
+      console.warn(`⚠ Tier 2 failed for ${videoId}: ${error.message}`);
+    }
+
+    // TIER 3: Try Node.js youtube-transcript
+    try {
+      console.log(`📦 Tier 3: Attempting Node.js transcript fetch for: ${videoId}`);
+      const nodeTranscript = await this.fetchTranscriptNode(videoId, videoDuration);
+      if (nodeTranscript) {
+        console.log(`✅ Node.js transcript fetch successful`);
+        return nodeTranscript;
+      }
+    } catch (error) {
+      console.warn(`⚠ Tier 3 failed for ${videoId}: ${error.message}`);
+    }
+
+    console.error(`❌ All transcription methods failed for ${videoId}`);
+    return null;
   }
 
   /**
@@ -302,6 +344,128 @@ export class WhisperService {
   estimateCost(durationMinutes: number): number {
     // OpenAI Whisper pricing: $0.006 per minute
     return durationMinutes * 0.006;
+  }
+
+  /**
+   * TIER 2: Fetch transcript using Python youtube-transcript-api
+   */
+  private async fetchTranscriptPython(videoId: string): Promise<WhisperTranscript | null> {
+    return new Promise((resolve, reject) => {
+      const scriptPath = path.join(process.cwd(), 'scripts', 'fetch-transcript.py');
+      const pythonProcess = spawn('python3', [scriptPath, videoId, '--languages', 'no', 'en', 'da', 'sv'], {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      pythonProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on('close', (code) => {
+        if (code === 0 && stdout.trim()) {
+          try {
+            const result = JSON.parse(stdout);
+            if (result.success) {
+              const transcript: WhisperTranscript = {
+                text: result.text,
+                segments: result.segments,
+                language: result.language,
+                duration: result.duration,
+                source: result.source as 'youtube-auto' | 'youtube-manual',
+                qualityScore: this.calculateYouTubeQualityScore(result.text, result.is_generated)
+              };
+              resolve(transcript);
+            } else {
+              reject(new Error(result.message || 'Python transcript fetch failed'));
+            }
+          } catch (parseError) {
+            reject(new Error(`Failed to parse Python response: ${parseError.message}`));
+          }
+        } else {
+          reject(new Error(`Python process failed (code ${code}): ${stderr || 'Unknown error'}`));
+        }
+      });
+
+      pythonProcess.on('error', (error) => {
+        reject(new Error(`Python process error: ${error.message}`));
+      });
+    });
+  }
+
+  /**
+   * TIER 3: Fetch transcript using Node.js youtube-transcript package
+   */
+  private async fetchTranscriptNode(videoId: string, videoDuration: number): Promise<WhisperTranscript | null> {
+    try {
+      const transcript = await youtubeTranscript.YouTubeTranscript.fetchTranscript(videoId);
+      
+      if (!transcript || transcript.length === 0) {
+        throw new Error('No transcript returned');
+      }
+
+      // Convert to our format
+      const segments = transcript.map((item, index) => ({
+        id: index,
+        start: item.offset / 1000, // Convert ms to seconds
+        end: (item.offset + item.duration) / 1000,
+        text: item.text
+      }));
+
+      const fullText = transcript.map(item => item.text).join(' ');
+      
+      // Estimate duration from last segment if not provided
+      const estimatedDuration = videoDuration || 
+        (transcript.length > 0 ? (transcript[transcript.length - 1].offset + transcript[transcript.length - 1].duration) / 1000 : 0);
+
+      return {
+        text: fullText,
+        segments,
+        language: 'unknown', // Node.js package doesn't provide language info
+        duration: estimatedDuration,
+        source: 'youtube-auto', // Assume auto-generated
+        qualityScore: this.calculateYouTubeQualityScore(fullText, true)
+      };
+
+    } catch (error) {
+      throw new Error(`Node.js transcript fetch failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Calculate quality score for YouTube transcripts
+   */
+  private calculateYouTubeQualityScore(text: string, isGenerated: boolean): number {
+    // Base score depends on whether it's manual or auto-generated
+    let qualityScore = isGenerated ? 0.6 : 0.8;
+    
+    const wordCount = text.split(' ').length;
+    
+    // Bonus for reasonable length
+    if (wordCount > 50) {
+      qualityScore += 0.1;
+    }
+    
+    // Penalty for lots of repetition or garbled text
+    const uniqueWords = new Set(text.toLowerCase().split(' '));
+    const uniqueRatio = uniqueWords.size / wordCount;
+    if (uniqueRatio < 0.3) {
+      qualityScore -= 0.2; // Very repetitive
+    }
+    
+    // Penalty for lots of brackets (music, applause, etc.)
+    const bracketsCount = (text.match(/\[.*?\]/g) || []).length;
+    const bracketsRatio = bracketsCount / wordCount;
+    if (bracketsRatio > 0.1) {
+      qualityScore -= 0.15;
+    }
+    
+    return Math.max(0.1, Math.min(1.0, qualityScore));
   }
 
   /**
