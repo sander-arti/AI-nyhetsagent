@@ -1,5 +1,4 @@
 import { WhisperService } from '../services/whisper.service.js';
-import { YouTubeService } from '../services/youtube.service.js';
 import { getDatabase } from '../db/database.js';
 import { VideoMetadata } from '../types/youtube.types.js';
 
@@ -22,12 +21,10 @@ export interface TranscriptSegment {
 
 export class TranscriptProcessor {
   private whisperService: WhisperService;
-  private youtubeService: YouTubeService;
   private db;
 
-  constructor(openaiApiKey: string, youtubeApiKey: string, maxWhisperMinutes: number = 180) {
+  constructor(openaiApiKey: string, maxWhisperMinutes: number = 180) {
     this.whisperService = new WhisperService(openaiApiKey, maxWhisperMinutes);
-    this.youtubeService = new YouTubeService(youtubeApiKey);
     this.db = getDatabase();
   }
 
@@ -46,32 +43,8 @@ export class TranscriptProcessor {
       return existingTranscript;
     }
 
-    // Try YouTube captions first
-    console.log(`🎬 Trying YouTube captions for: ${title}`);
-    const youtubeCaption = await this.tryYouTubeCaptions(videoId);
-    if (youtubeCaption) {
-      console.log(`✅ Got YouTube captions (${youtubeCaption.segments.length} segments)`);
-      const processedTranscript: ProcessedTranscript = {
-        videoId,
-        text: youtubeCaption.text,
-        segments: youtubeCaption.segments.map(seg => ({
-          start: seg.start,
-          end: seg.end,
-          text: seg.text
-        })),
-        language: youtubeCaption.language,
-        source: 'youtube-captions',
-        qualityScore: 0.9, // High quality for official captions
-        duration,
-        cost: 0 // Free!
-      };
-
-      await this.saveTranscript(processedTranscript);
-      return processedTranscript;
-    }
-
-    // Fallback: Transcribe with Whisper API
-    console.log(`🎙️ No captions available, falling back to Whisper...`);
+    // Transcribe with Whisper API
+    console.log(`🎙️ Transcribing with Whisper: ${title}`);
     let processedTranscript: ProcessedTranscript | null = null;
     const durationMinutes = duration / 60;
     
@@ -120,22 +93,6 @@ export class TranscriptProcessor {
     return processedTranscript;
   }
 
-  /**
-   * Try to get captions from YouTube
-   */
-  private async tryYouTubeCaptions(videoId: string): Promise<{
-    text: string;
-    segments: Array<{ start: number; end: number; text: string }>;
-    language: string;
-    source: 'youtube-captions';
-  } | null> {
-    try {
-      return await this.youtubeService.getCaptions(videoId);
-    } catch (error) {
-      console.warn(`Failed to get YouTube captions for ${videoId}:`, error);
-      return null;
-    }
-  }
 
   /**
    * Check if transcript already exists in database
