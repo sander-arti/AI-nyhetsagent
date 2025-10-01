@@ -102,6 +102,10 @@ export class LLMService {
     
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i];
+      if (!segment || !segment.text) {
+        console.warn(`⚠️ Invalid segment at index ${i}:`, segment);
+        continue;
+      }
       const segmentWords = segment.text.split(' ').length;
       
       // Check if adding this segment would exceed token limit
@@ -126,7 +130,7 @@ export class LLMService {
         if (currentChunk.text) {
           currentChunk.text += ' ';
         }
-        currentChunk.text += segment.text;
+        currentChunk.text += segment.text || '';
         currentChunk.endTime = segment.end;
         currentChunk.wordCount += segmentWords;
       }
@@ -338,14 +342,24 @@ Eksempel god summary: "OpenAI lanserer ChatGPT Canvas-modus med split-screen edi
 FOKUS PÅ: Diskusjonstemaer, forskjellige synspunkter, argumenter, konsekvenser
 EKSTRAHER: topic (10-120 tegn på norsk), whatWasDiscussed (50-500 tegn med SPESIFIKK innhold), pro/contra posisjoner, nøkkelsitater med kontekst, implications (20-400 tegn)
 Fang nyansene i forskjellige perspektiver og HVORFOR temaet betyr noe.
-Vær KONKRET om hva som faktisk ble diskutert - ikke vag om "diverse synspunkter". Inkluder spesifikke argumenter, eksempler og sitater.`,
+Vær KONKRET om hva som faktisk ble diskutert - ikke vag om "diverse synspunkter". Inkluder spesifikke argumenter, eksempler og sitater.
+
+PÅKREVDE FELTER for debate-items:
+- positions: ALLTID inkluder objekt med {"pro": [], "contra": []} arrays. Hvis ingen argumenter nevnt, bruk tomme arrays.
+- keyQuotes: ALLTID inkluder array med sitater. Hvis ingen sitater, bruk tom array [].
+- Hvert sitat må ha: quote, timestamp (HH:MM:SS format), og eventuelt speaker og context.`,
 
       dev: `
 FOKUS PÅ: Verktøylanseringer, API-endringer, tutorials, kodeeksempler, utviklerressurser
 EKSTRAHER: title (10-150 tegn på norsk), whatChanged (20-400 tegn med SPESIFIKKE detaljer), hvordan det påvirker utviklere, nødvendige handlinger, lenker/ressurser nevnt
 Prioriter KONKRET informasjon utviklere kan bruke umiddelbart. 
 Inkluder versjonnumre, nye metoder/funksjoner, breaking changes, installasjonsinstruksjoner, API-endepunkt hvis nevnt.
-Eksempel: "GitHub Copilot får nye @workspace kommando som lar deg referere hele prosjektet. Tilgjengelig i VS Code 1.85+ via Copilot Chat panel."`
+Eksempel: "GitHub Copilot får nye @workspace kommando som lar deg referere hele prosjektet. Tilgjengelig i VS Code 1.85+ via Copilot Chat panel."
+
+PÅKREVDE FELTER for dev-items:
+- changeType: ALLTID spesifiser en av: release, breaking, feature, tutorial, tool, api, framework, library
+- developerAction: ALLTID spesifiser en av: try, update, evaluate, migrate, test, learn
+- links: ALLTID inkluder array med URL-er nevnt i videoen. Hvis ingen lenker nevnt, bruk tom array [].`
     };
 
     return base + specific[sourceType];
@@ -354,7 +368,7 @@ Eksempel: "GitHub Copilot får nye @workspace kommando som lar deg referere hele
   /**
    * Merge results from multiple chunks
    */
-  private mergeChunkResults(chunkResults: any[], sourceType: string): any[] {
+  private mergeChunkResults(chunkResults: any[], _sourceType: string): any[] {
     const allItems: any[] = [];
     
     for (const result of chunkResults) {
