@@ -151,14 +151,13 @@ export class TranscriptProcessor {
 
       // Insert transcript
       await this.db.run(`
-        INSERT OR REPLACE INTO transcripts (video_id, text, segments, quality_score, transcript_source)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO transcripts (video_id, text, segments, quality_score)
+        VALUES (?, ?, ?, ?)
       `, [
         internalVideoId,
         transcript.text,
         JSON.stringify(transcript.segments),
         transcript.qualityScore,
-        transcript.source,
       ]);
 
       // Update video with transcript info
