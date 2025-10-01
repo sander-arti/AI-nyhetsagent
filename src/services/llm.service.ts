@@ -321,8 +321,10 @@ KRITISKE REGLER:
 
 STRENGE FORMAT-KRAV:
 - title: 10-150 tegn (vær beskrivende og konkret)
-- summary: 50-250 tegn (MAKS 250 tegn - kort og presist)
-- relevance_score: ALLTID inkluder som heltall 1-10
+- summary: 50-200 tegn (MAKS 200 tegn - kort og presist)
+- relevance_score: ALLTID PÅKREVD som heltall 1-10 (9-10: Breaking news, 7-8: Viktig, 5-6: Interessant, 3-4: Minor, 1-2: Trivia)
+- rawContext: ALLTID PÅKREVD - eksakt tekstutdrag fra transkripsjonen
+- confidence: ALLTID PÅKREVD - high/medium/low basert på klarhet
 - Hold alle tekstfelt innenfor disse strenge grensene`;
 
     const specific = {
@@ -339,7 +341,18 @@ SPESIELL HÅNDTERING AV SAMMENDRAGSVIDEOER:
 - Godta kortere beskrivelser hvis det er det som er tilgjengelig i originalkilden
 - Fang opp overskrifter som "First up...", "Next...", "Also this week..." som signaler på separate nyheter
 
-Eksempel god summary: "OpenAI lanserer ChatGPT Canvas-modus med split-screen editor, versjonskontroll og inline-redigering. Rulles ut til Plus-brukere denne uken, gratis brukere om 2-3 uker."`,
+Eksempel god summary: "OpenAI lanserer ChatGPT Canvas-modus med split-screen editor, versjonskontroll og inline-redigering. Rulles ut til Plus-brukere denne uken."
+
+EKSEMPEL NEWS OUTPUT:
+{
+  "title": "OpenAI lanserer GPT-5 med forbedret reasoning",
+  "summary": "Ny modell med 10x bedre logisk resonnering og 50% raskere responstid. Tilgjengelig for Plus-brukere.",
+  "type": "release",
+  "relevance_score": 9,
+  "entities": ["OpenAI", "GPT-5"],
+  "rawContext": "OpenAI announced today their new GPT-5 model with significant improvements...",
+  "confidence": "high"
+}`,
 
       debate: `
 FOKUS PÅ: Diskusjonstemaer, forskjellige synspunkter, argumenter, konsekvenser
@@ -348,11 +361,27 @@ Fang nyansene i forskjellige perspektiver og HVORFOR temaet betyr noe.
 Vær KONKRET om hva som faktisk ble diskutert - ikke vag om "diverse synspunkter". Inkluder spesifikke argumenter, eksempler og sitater.
 
 PÅKREVDE FELTER for debate-items:
-- positions: ALLTID inkluder objekt med {"pro": [], "contra": []} arrays. Hvis ingen argumenter nevnt, bruk tomme arrays.
-- keyQuotes: ALLTID inkluder array med sitater. Hvis ingen sitater, bruk tom array [].
-- Hvert sitat må ha: quote, timestamp (HH:MM:SS format), og eventuelt speaker og context.
-- rawContext: ALLTID inkluder eksakt tekst-utdrag fra transkripsjonen som støtter denne debatten
-- relevance_score: ALLTID inkluder som heltall 1-10`,
+1. positions: ALLTID inkluder objekt med {"pro": [], "contra": []} arrays. Hvis ingen argumenter nevnt, bruk tomme arrays.
+2. keyQuotes: ALLTID inkluder array med sitater. Hvis ingen sitater, bruk tom array [].
+3. Hvert sitat må ha: quote, timestamp (HH:MM:SS format), og eventuelt speaker og context.
+4. implications: ALLTID inkluder hvorfor dette temaet betyr noe (10-300 tegn). Forklar konsekvenser og betydning.
+5. rawContext: ALLTID inkluder eksakt tekst-utdrag fra transkripsjonen som støtter denne debatten
+6. relevance_score: ALLTID inkluder som heltall 1-10
+
+EKSEMPEL DEBATE OUTPUT:
+{
+  "topic": "AI-regulering vs innovasjonsfrihet",
+  "whatWasDiscussed": "Diskusjon om hvorvidt strenge AI-reguleringer hemmer innovasjon eller er nødvendige for sikkerhet",
+  "positions": {
+    "pro": ["Sikkerhet krever regulering", "Beskytter mot misbruk"],
+    "contra": ["Hemmer innovasjon", "Gjør Europa mindre konkurransedyktig"]
+  },
+  "implications": "Reguleringsbeslutninger vil påvirke Europas posisjon i global AI-konkurranse",
+  "keyQuotes": [],
+  "relevance_score": 7,
+  "rawContext": "The discussion centered around whether strict AI regulation would hurt innovation...",
+  "confidence": "high"
+}`,
 
       dev: `
 FOKUS PÅ: Verktøylanseringer, API-endringer, tutorials, kodeeksempler, utviklerressurser
@@ -362,12 +391,24 @@ Inkluder versjonnumre, nye metoder/funksjoner, breaking changes, installasjonsin
 Eksempel: "GitHub Copilot får nye @workspace kommando som lar deg referere hele prosjektet. Tilgjengelig i VS Code 1.85+ via Copilot Chat panel."
 
 PÅKREVDE FELTER for dev-items:
-- changeType: ALLTID spesifiser en av: release, breaking, feature, tutorial, tool, api, framework, library (IKKE bruk 'policy')
-- developerAction: ALLTID spesifiser en av: try, update, evaluate, migrate, test, learn
-- whatChanged: ALLTID inkluder spesifikke detaljer om hva som er nytt/endret (20-300 tegn)
-- links: ALLTID inkluder array med URL-er nevnt i videoen. Hvis ingen lenker nevnt, bruk tom array []
-- rawContext: ALLTID inkluder eksakt tekst-utdrag fra transkripsjonen
-- relevance_score: ALLTID inkluder som heltall 1-10`
+1. changeType: ALLTID spesifiser en av: release, breaking, feature, tutorial, tool, api, framework, library (IKKE bruk 'policy')
+2. developerAction: ALLTID spesifiser en av: try, update, evaluate, migrate, test, learn
+3. whatChanged: ALLTID inkluder spesifikke detaljer om hva som er nytt/endret (20-200 tegn)
+4. links: ALLTID inkluder array med URL-er nevnt i videoen. Hvis ingen lenker nevnt, bruk tom array []
+5. rawContext: ALLTID inkluder eksakt tekst-utdrag fra transkripsjonen
+6. relevance_score: ALLTID inkluder som heltall 1-10
+
+EKSEMPEL DEV OUTPUT:
+{
+  "title": "GitHub Copilot får @workspace kommando",
+  "whatChanged": "Ny @workspace kommando lar deg referere hele prosjektet i Copilot Chat. Tilgjengelig i VS Code 1.85+",
+  "changeType": "feature",
+  "developerAction": "try",
+  "links": [],
+  "relevance_score": 6,
+  "rawContext": "GitHub announced the new @workspace command for Copilot Chat that allows developers to reference their entire project...",
+  "confidence": "high"
+}`
     };
 
     return base + specific[sourceType];

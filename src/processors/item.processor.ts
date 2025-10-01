@@ -237,6 +237,50 @@ export class ItemProcessor {
       sourceUrl: video.url,
     };
 
+    // Add fallback values for missing required fields
+    if (!enhancedItem.relevance_score) {
+      enhancedItem.relevance_score = 5; // Default to medium relevance
+    }
+    
+    if (!enhancedItem.rawContext) {
+      enhancedItem.rawContext = enhancedItem.title || enhancedItem.topic || 'Context unavailable';
+    }
+
+    if (!enhancedItem.confidence) {
+      enhancedItem.confidence = 'medium'; // Safe default
+    }
+
+    // Type-specific fallbacks
+    if (sourceInfo.type === 'debate') {
+      if (!enhancedItem.implications) {
+        enhancedItem.implications = 'Diskutert tema med potensielle konsekvenser for teknologi og samfunn.';
+      }
+      if (!enhancedItem.positions) {
+        enhancedItem.positions = { pro: [], contra: [] };
+      }
+      if (!enhancedItem.keyQuotes) {
+        enhancedItem.keyQuotes = [];
+      }
+    }
+
+    if (sourceInfo.type === 'dev') {
+      if (!enhancedItem.links) {
+        enhancedItem.links = [];
+      }
+      if (!enhancedItem.changeType) {
+        enhancedItem.changeType = 'tool';  // Most common fallback
+      }
+      if (!enhancedItem.developerAction) {
+        enhancedItem.developerAction = 'evaluate';
+      }
+    }
+
+    if (sourceInfo.type === 'news') {
+      if (!enhancedItem.entities) {
+        enhancedItem.entities = [];
+      }
+    }
+
     // Add timestamp if missing but we have rawContext
     if (!enhancedItem.timestamp && enhancedItem.rawContext) {
       enhancedItem.timestamp = this.findTimestampForContext(enhancedItem.rawContext, video);
