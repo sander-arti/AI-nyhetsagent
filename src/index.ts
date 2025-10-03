@@ -14,12 +14,7 @@ async function main() {
     dryRun: process.env.DRY_RUN === 'true',
     rapidApiKey: process.env.RAPIDAPI_KEY,
     rapidApiHost: process.env.RAPIDAPI_HOST,
-    rapidApiRateLimit: parseInt(process.env.RAPIDAPI_RATE_LIMIT || '10'),
-    smartGrouping: {
-      enabled: process.env.SMART_GROUPING_ENABLED !== 'false', // Default to enabled
-      minGroupSize: parseInt(process.env.MIN_GROUP_SIZE || '2'), // 2+ items for grouping
-      preserveDetails: process.env.PRESERVE_DETAILS !== 'false' // Default to true
-    }
+    rapidApiRateLimit: parseInt(process.env.RAPIDAPI_RATE_LIMIT || '10')
   };
 
   // Validate required environment variables

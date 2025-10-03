@@ -3,8 +3,6 @@ import { TranscriptProcessor } from '../processors/transcript.processor.js';
 import { ItemProcessor } from '../processors/item.processor.js';
 import { DedupProcessor } from '../processors/dedup.processor.js';
 import { SlackService, SlackBriefData } from './slack.service.js';
-import { SmartGroupingService, ParsedItem } from './smart-grouping.service.js';
-import { HierarchicalSlackService } from './hierarchical-slack.service.js';
 import { getDatabase } from '../db/database.js';
 import { NewsItem, DebateItem, DevItem } from '../types/schemas.js';
 
@@ -21,11 +19,6 @@ export interface OrchestratorConfig {
   rapidApiKey?: string;
   rapidApiHost?: string;
   rapidApiRateLimit?: number;
-  smartGrouping?: {
-    enabled: boolean;
-    minGroupSize: number;
-    preserveDetails: boolean;
-  };
 }
 
 export interface RunStats {
@@ -52,8 +45,6 @@ export class OrchestratorService {
   private itemProcessor: ItemProcessor;
   private dedupProcessor: DedupProcessor;
   private slackService: SlackService;
-  private smartGroupingService?: SmartGroupingService;
-  private hierarchicalSlackService?: HierarchicalSlackService;
   private db;
   private config: OrchestratorConfig;
 
@@ -70,14 +61,6 @@ export class OrchestratorService {
     this.itemProcessor = new ItemProcessor(config.openaiApiKey);
     this.dedupProcessor = new DedupProcessor(config.openaiApiKey);
     this.slackService = new SlackService(config.slackBotToken);
-    
-    // Initialize smart grouping services if enabled
-    if (config.smartGrouping?.enabled) {
-      this.smartGroupingService = new SmartGroupingService(config.smartGrouping);
-      this.hierarchicalSlackService = new HierarchicalSlackService(config.slackBotToken);
-      console.log('🎯 Smart grouping enabled - hierarchical formatting will be used');
-    }
-    
     this.db = getDatabase();
   }
 
@@ -322,53 +305,9 @@ export class OrchestratorService {
   }
 
   /**
-   * Send Slack brief with deduplicated items - supports both standard and smart grouping
+   * Send Slack brief with deduplicated items
    */
   private async sendSlackBrief(items: any[], runStats: RunStats): Promise<void> {
-    // Try smart grouping first if enabled
-    if (this.smartGroupingService && this.hierarchicalSlackService) {
-      console.log('📊 Using smart grouping for Slack brief');
-      await this.sendHierarchicalBrief(items, runStats);
-    } else {
-      console.log('📊 Using standard format for Slack brief');
-      await this.sendStandardBrief(items, runStats);
-    }
-  }
-
-  /**
-   * Send hierarchical brief with smart grouping
-   */
-  private async sendHierarchicalBrief(items: any[], runStats: RunStats): Promise<void> {
-    const parsedItems: ParsedItem[] = items as ParsedItem[];
-    const groupedBrief = await this.smartGroupingService!.groupItems(parsedItems);
-
-    const hierarchicalBriefData = {
-      runId: runStats.runId,
-      processedSources: runStats.stats.sourcesProcessed,
-      videosFound: runStats.stats.videosFound,
-      videosTranscribed: runStats.stats.videosTranscribed,
-      totalCost: runStats.stats.totalCost,
-      duration: this.formatDuration(Date.now() - runStats.startedAt.getTime()),
-      groupedBrief,
-      timestamp: new Date()
-    };
-
-    const result = await this.hierarchicalSlackService!.sendHierarchicalBrief(
-      hierarchicalBriefData, 
-      this.config.slackChannelId
-    );
-    
-    if (!result.success) {
-      throw new Error(`Hierarchical Slack posting failed: ${result.error}`);
-    }
-
-    console.log('✅ Hierarchical Slack brief sent successfully');
-  }
-
-  /**
-   * Send standard brief (fallback)
-   */
-  private async sendStandardBrief(items: any[], runStats: RunStats): Promise<void> {
     // Group items by type
     const newsItems: NewsItem[] = [];
     const debateItems: DebateItem[] = [];
@@ -401,20 +340,10 @@ export class OrchestratorService {
     const result = await this.slackService.sendBrief(briefData, this.config.slackChannelId);
     
     if (!result.success) {
-      throw new Error(`Standard Slack posting failed: ${result.error}`);
+      throw new Error(`Slack posting failed: ${result.error}`);
     }
 
-    console.log('✅ Standard Slack brief sent successfully');
-  }
-
-  /**
-   * Format duration in human readable format
-   */
-  private formatDuration(ms: number): string {
-    const seconds = Math.floor(ms / 1000);
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    return `${minutes}m ${seconds % 60}s`;
+    console.log('✅ Slack brief sent successfully');
   }
 
   /**
