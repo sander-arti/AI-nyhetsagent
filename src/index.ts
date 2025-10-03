@@ -14,19 +14,7 @@ async function main() {
     dryRun: process.env.DRY_RUN === 'true',
     rapidApiKey: process.env.RAPIDAPI_KEY,
     rapidApiHost: process.env.RAPIDAPI_HOST,
-    rapidApiRateLimit: parseInt(process.env.RAPIDAPI_RATE_LIMIT || '10'),
-    clustering: {
-      enabled: process.env.CLUSTERING_ENABLED !== 'false', // Default to enabled
-      minClusterSize: parseInt(process.env.MIN_CLUSTER_SIZE || '2'),
-      entityExtractionThreshold: parseFloat(process.env.ENTITY_EXTRACTION_THRESHOLD || '0.7'),
-      preserveAllDetails: process.env.PRESERVE_ALL_DETAILS !== 'false', // Default to true
-      generateSummaries: process.env.GENERATE_SUMMARIES !== 'false', // Default to true
-      tldrConfig: {
-        enabled: process.env.TLDR_ENABLED !== 'false', // Default to enabled
-        maxPoints: parseInt(process.env.MAX_TLDR_POINTS || '5'),
-        includeStats: process.env.TLDR_INCLUDE_STATS !== 'false' // Default to true
-      }
-    }
+    rapidApiRateLimit: parseInt(process.env.RAPIDAPI_RATE_LIMIT || '10')
   };
 
   // Validate required environment variables
