@@ -3,6 +3,9 @@ import { TranscriptProcessor } from '../processors/transcript.processor.js';
 import { ItemProcessor } from '../processors/item.processor.js';
 import { DedupProcessor } from '../processors/dedup.processor.js';
 import { SlackService, SlackBriefData } from './slack.service.js';
+import { ContentClusteringService } from './clustering.service.js';
+import { EnhancedSlackFormatter, EnhancedSlackBriefData } from './enhanced-slack.service.js';
+import { ClusteringConfig } from '../types/clustering.types.js';
 import { getDatabase } from '../db/database.js';
 import { NewsItem, DebateItem, DevItem } from '../types/schemas.js';
 
@@ -19,6 +22,7 @@ export interface OrchestratorConfig {
   rapidApiKey?: string;
   rapidApiHost?: string;
   rapidApiRateLimit?: number;
+  clustering?: ClusteringConfig;
 }
 
 export interface RunStats {
@@ -45,6 +49,8 @@ export class OrchestratorService {
   private itemProcessor: ItemProcessor;
   private dedupProcessor: DedupProcessor;
   private slackService: SlackService;
+  private clusteringService?: ContentClusteringService;
+  private enhancedSlackService?: EnhancedSlackFormatter;
   private db;
   private config: OrchestratorConfig;
 
@@ -61,6 +67,14 @@ export class OrchestratorService {
     this.itemProcessor = new ItemProcessor(config.openaiApiKey);
     this.dedupProcessor = new DedupProcessor(config.openaiApiKey);
     this.slackService = new SlackService(config.slackBotToken);
+    
+    // Initialize clustering services if enabled
+    if (config.clustering?.enabled) {
+      this.clusteringService = new ContentClusteringService(config.clustering);
+      this.enhancedSlackService = new EnhancedSlackFormatter(config.slackBotToken);
+      console.log('🎯 Clustering enabled - enhanced formatting will be used');
+    }
+    
     this.db = getDatabase();
   }
 
@@ -305,9 +319,47 @@ export class OrchestratorService {
   }
 
   /**
-   * Send Slack brief with deduplicated items
+   * Send Slack brief with smart clustering if enabled, fallback to standard format
    */
   private async sendSlackBrief(items: any[], runStats: RunStats): Promise<void> {
+    const processingStartTime = Date.now();
+
+    // Use enhanced clustering if available
+    if (this.clusteringService && this.enhancedSlackService) {
+      console.log('🎯 Using enhanced clustering and formatting');
+      
+      const clusteredBrief = await this.clusteringService.clusterItems(items);
+      
+      const enhancedBriefData: EnhancedSlackBriefData = {
+        clusteredBrief,
+        runId: runStats.runId,
+        generatedAt: new Date(),
+        stats: {
+          totalVideos: runStats.stats.videosTranscribed,
+          totalItems: items.length,
+          processingTimeMs: Date.now() - runStats.startedAt.getTime(),
+          cost: runStats.stats.totalCost
+        }
+      };
+
+      const result = await this.enhancedSlackService.sendClusteredBrief(
+        enhancedBriefData, 
+        this.config.slackChannelId
+      );
+      
+      if (!result.success) {
+        console.warn('⚠️ Enhanced Slack posting failed, falling back to standard format');
+        console.warn('Error:', result.error);
+        // Fall through to standard format
+      } else {
+        console.log(`✅ Enhanced Slack brief sent successfully (${Date.now() - processingStartTime}ms)`);
+        return;
+      }
+    }
+
+    // Standard format fallback
+    console.log('📝 Using standard brief format');
+    
     // Group items by type
     const newsItems: NewsItem[] = [];
     const debateItems: DebateItem[] = [];
@@ -343,7 +395,7 @@ export class OrchestratorService {
       throw new Error(`Slack posting failed: ${result.error}`);
     }
 
-    console.log('✅ Slack brief sent successfully');
+    console.log('✅ Standard Slack brief sent successfully');
   }
 
   /**
