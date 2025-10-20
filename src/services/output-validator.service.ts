@@ -17,6 +17,24 @@ export interface ItemValidationResult {
 }
 
 export class OutputValidatorService {
+  private validationMode: 'strict' | 'moderate' | 'lenient' = 'strict';
+  private validationAttempt: number = 0;
+
+  /**
+   * Set validation mode based on retry attempt
+   */
+  setValidationMode(attempt: number): void {
+    this.validationAttempt = attempt;
+    if (attempt === 0) {
+      this.validationMode = 'strict';    // 70% threshold
+    } else if (attempt === 1) {
+      this.validationMode = 'moderate';  // 50% threshold
+    } else {
+      this.validationMode = 'lenient';   // 30% threshold
+    }
+    console.log(`🔍 Validation mode: ${this.validationMode} (attempt ${attempt})`);
+  }
+
   /**
    * Validate extracted items against transcript and context
    */
@@ -215,6 +233,7 @@ export class OutputValidatorService {
 
   /**
    * Check if rawContext actually exists in transcript (prevent complete fabrication)
+   * Uses adaptive thresholds based on validation mode
    */
   private contextExistsInTranscript(rawContext: string, fullText: string): boolean {
     // Remove extra whitespace for comparison
@@ -223,22 +242,51 @@ export class OutputValidatorService {
 
     // Check for exact match (with some tolerance)
     if (cleanText.includes(cleanContext)) {
+      console.log(`  ✅ rawContext: Exact match found`);
       return true;
     }
 
-    // Check for substantial overlap (at least 70% of words should match)
-    const contextWords = cleanContext.toLowerCase().split(' ');
+    // Adaptive threshold based on validation mode
+    const thresholds = {
+      strict: 0.70,    // 70% word overlap (original)
+      moderate: 0.50,  // 50% word overlap (retry 1)
+      lenient: 0.30    // 30% word overlap (retry 2+)
+    };
+    const requiredOverlap = thresholds[this.validationMode];
+
+    // Check for substantial overlap
+    const contextWords = cleanContext.toLowerCase().split(' ').filter(w => w.length > 3);
     const textWords = cleanText.toLowerCase().split(' ');
 
     let matchingWords = 0;
+    const missingWords: string[] = [];
+
     for (const word of contextWords) {
-      if (word.length > 3 && textWords.includes(word)) {  // Skip short words
+      if (textWords.includes(word)) {
         matchingWords++;
+      } else {
+        missingWords.push(word);
       }
     }
 
-    const overlapRatio = matchingWords / contextWords.length;
-    return overlapRatio >= 0.7;  // At least 70% word overlap
+    const overlapRatio = contextWords.length > 0 ? matchingWords / contextWords.length : 0;
+    const passed = overlapRatio >= requiredOverlap;
+
+    // Detailed logging
+    if (passed) {
+      console.log(`  ✅ rawContext: ${(overlapRatio * 100).toFixed(1)}% overlap (≥${(requiredOverlap * 100).toFixed(0)}% required in ${this.validationMode} mode)`);
+    } else {
+      console.log(`  ❌ rawContext: ${(overlapRatio * 100).toFixed(1)}% overlap (<${(requiredOverlap * 100).toFixed(0)}% required in ${this.validationMode} mode)`);
+      console.log(`     Matching: ${matchingWords}/${contextWords.length} words`);
+      if (missingWords.length <= 10) {
+        console.log(`     Missing words: ${missingWords.slice(0, 10).join(', ')}`);
+      } else {
+        console.log(`     Missing ${missingWords.length} words (showing first 10): ${missingWords.slice(0, 10).join(', ')}`);
+      }
+      console.log(`     rawContext preview: "${cleanContext.substring(0, 100)}..."`);
+    }
+
+    return passed;
   }
 
   /**

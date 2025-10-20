@@ -409,6 +409,9 @@ export class LLMService {
 
       // Validate extracted items
       if (parsed.items && Array.isArray(parsed.items) && parsed.items.length > 0) {
+        // Set validation mode based on retry attempt (adaptive thresholds)
+        this.validator.setValidationMode(retryAttempt);
+
         const validationResults = await this.validator.validateExtractedItems(
           parsed.items,
           chunk,
@@ -751,10 +754,24 @@ Steg 2: FOR HVER POTENSIELL ITEM - VERIFISER
 - Er det konkrete detaljer (navn, tall, datoer)? (Ja/Nei)
 - Hvis NEI på noen av disse → HOPP OVER denne itemen
 
-Steg 3: EKSTRAHER RAWCONTEXT
-- Finn EKSAKT tekstutdrag som støtter itemen
-- Kopier ordrett fra transkripsjonen (ikke omformuler)
-- Sjekk at rawContext inneholder all nødvendig info
+Steg 3: EKSTRAHER RAWCONTEXT ⚠️ KRITISK VIKTIG!
+rawContext = CTRL+C / CTRL+V fra transkripsjonen - INGEN omformulering!
+
+❌ FEIL (parafrasering):
+Transcript: "OpenAI today announced the release of GPT-4 Turbo with vision capabilities"
+rawContext: "OpenAI lanserte GPT-4 Turbo med bildeforståelse" ← NEI! Dette er omformulert!
+
+✅ RIKTIG (eksakt kopi):
+Transcript: "OpenAI today announced the release of GPT-4 Turbo with vision capabilities"
+rawContext: "OpenAI today announced the release of GPT-4 Turbo with vision capabilities" ← JA! Eksakt kopi!
+
+REGLER FOR RAWCONTEXT:
+1. Kopier ORDRETT fra transkripsjonen (copy-paste mentalitet)
+2. IKKE oversett til norsk
+3. IKKE skriv om eller omformuler
+4. IKKE oppsummer eller forkorte
+5. rawContext skal være 50-300 tegn - finn relevant tekstbit som støtter itemen
+6. Hvis du ikke kan finne eksakt match i teksten → HOPP OVER denne itemen
 
 Steg 4: IDENTIFISER ENTITIES
 - List opp ALLE selskaper/produkter/personer nevnt i rawContext
@@ -820,16 +837,41 @@ SPESIELL HÅNDTERING AV SAMMENDRAGSVIDEOER:
 
 Eksempel god summary: "OpenAI lanserer ChatGPT Canvas-modus med split-screen editor, versjonskontroll og inline-redigering. Rulles ut til Plus-brukere denne uken."
 
-EKSEMPEL NEWS OUTPUT:
+📚 FEW-SHOT EKSEMPLER PÅ PERFEKT RAWCONTEXT:
+
+EKSEMPEL 1 - RIKTIG:
+Transcript: "...and then Anthropic announced their new Claude 3.5 Sonnet model which they say has significantly improved coding capabilities and can now handle up to 200,000 tokens in context..."
+Output:
 {
-  "title": "OpenAI lanserer GPT-5 med forbedret reasoning",
-  "summary": "Ny modell med 10x bedre logisk resonnering og 50% raskere responstid. Tilgjengelig for Plus-brukere.",
+  "title": "Anthropic lanserer Claude 3.5 Sonnet med forbedret koding",
+  "summary": "Ny modell med betydelig bedre kodeferdigheter og støtte for 200,000 tokens kontekst.",
   "type": "release",
   "relevance_score": 9,
-  "entities": ["OpenAI", "GPT-5"],
-  "rawContext": "OpenAI announced today their new GPT-5 model with significant improvements...",
+  "entities": ["Anthropic", "Claude 3.5 Sonnet"],
+  "rawContext": "Anthropic announced their new Claude 3.5 Sonnet model which they say has significantly improved coding capabilities and can now handle up to 200,000 tokens in context",
   "confidence": "high"
-}`,
+}
+
+EKSEMPEL 2 - FEIL (parafrasert rawContext):
+❌ IKKE gjør dette:
+{
+  "rawContext": "Anthropic har lansert en ny AI-modell med bedre kodeferdigheter" ← FEIL! Omformulert!
+}
+
+EKSEMPEL 3 - RIKTIG (eksakt quote):
+Transcript: "...so Google just dropped Gemini 2.0 Flash and it's absolutely insane, it's running at like twice the speed of the previous version and it costs half as much..."
+Output:
+{
+  "title": "Google lanserer Gemini 2.0 Flash",
+  "summary": "Dobbel hastighet sammenlignet med forrige versjon og halvparten av kostnaden.",
+  "type": "release",
+  "relevance_score": 8,
+  "entities": ["Google", "Gemini 2.0 Flash"],
+  "rawContext": "Google just dropped Gemini 2.0 Flash and it's absolutely insane, it's running at like twice the speed of the previous version and it costs half as much",
+  "confidence": "high"
+}
+
+🎯 NØKKELPOENG: rawContext skal være COPY-PASTE fra transkripsjonen, IKKE din egen omskriving!`,
 
       debate: `
 FOKUS PÅ: Diskusjonstemaer, forskjellige synspunkter, argumenter, konsekvenser
