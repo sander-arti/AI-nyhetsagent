@@ -25,7 +25,9 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.67.0",
     "@chroma-core/default-embed": "^0.1.8",
+    "@google/generative-ai": "^0.24.1",
     "@slack/web-api": "^7.10.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/pg": "^8.15.5",

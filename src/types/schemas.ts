@@ -130,6 +130,14 @@ export const VideoParsingResultSchema = z.object({
   tokensUsed: z.number().optional(),
   estimatedCost: z.number().optional(),
   errors: z.array(z.string()).optional(),
+  multiPassMetrics: z.object({
+    pass1Items: z.number(),
+    pass2Items: z.number(),
+    pass3Improvements: z.number(),
+    totalCost: z.number(),
+    totalTime: z.number(),
+    skippedPasses: z.array(z.string())
+  }).optional(),
 });
 
 export type NewsParsingResult = z.infer<typeof NewsParsingResultSchema>;

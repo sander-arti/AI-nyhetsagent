@@ -9,6 +9,19 @@ export interface EmbeddingData {
   textContent: string;
 }
 
+export interface SegmentEmbedding {
+  segmentId: number;
+  embedding: number[];
+  text: string;
+  timestamp: { start: number; end: number };
+}
+
+export interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export class EmbeddingService {
   private openai: OpenAI;
   private totalTokensUsed: number = 0;
@@ -183,7 +196,52 @@ export class EmbeddingService {
   }
 
   /**
+   * Generate embeddings for transcript segments
+   */
+  async generateSegmentEmbeddings(segments: TranscriptSegment[]): Promise<SegmentEmbedding[]> {
+    console.log(`🧮 Generating embeddings for ${segments.length} transcript segments`);
+
+    // Extract text from segments
+    const texts = segments.map(s => s.text);
+
+    // Generate embeddings in batches
+    const embeddings = await this.generateBatchEmbeddings(texts);
+
+    // Map back to segments
+    return segments.map((segment, index) => ({
+      segmentId: index,
+      embedding: embeddings[index],
+      text: segment.text,
+      timestamp: {
+        start: segment.start,
+        end: segment.end
+      }
+    }));
+  }
+
+  /**
    * Calculate cosine similarity between two embeddings
+   */
+  cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) {
+      throw new Error('Embeddings must have the same length');
+    }
+
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+
+  /**
+   * Static version for convenience
    */
   static cosineSimilarity(a: number[], b: number[]): number {
     if (a.length !== b.length) {

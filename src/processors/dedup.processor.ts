@@ -2,6 +2,21 @@ import { ParsedItem, NewsItem, DebateItem, DevItem } from '../types/schemas.js';
 import { EmbeddingService, EmbeddingData } from '../services/embedding.service.js';
 import { ChromaDBService, SimilarityResult } from '../services/chromadb.service.js';
 import { getDatabase } from '../db/database.js';
+import {
+  ContextualCluster,
+  ContextualItem,
+  TemporalContext,
+  SourceReputation,
+  CoverageTimelineEntry,
+  DedupConfig,
+} from '../types/dedup.types.js';
+import {
+  DEFAULT_DEDUP_CONFIG,
+  getSimilarityThreshold,
+  determineStoryPhase,
+  determineTimeWindow,
+  calculateRecencyBonus,
+} from '../config/dedup.config.js';
 
 export interface Cluster {
   id: string;
@@ -30,11 +45,28 @@ export class DedupProcessor {
   private embeddingService: EmbeddingService;
   private chromaService: ChromaDBService;
   private db;
+  private config: DedupConfig;
 
-  constructor(openaiApiKey: string, chromaHost = 'localhost', chromaPort = 8000) {
+  constructor(
+    openaiApiKey: string,
+    chromaHost = 'localhost',
+    chromaPort = 8000,
+    config: DedupConfig = DEFAULT_DEDUP_CONFIG
+  ) {
     this.embeddingService = new EmbeddingService(openaiApiKey);
     this.chromaService = new ChromaDBService(chromaHost, chromaPort);
     this.db = getDatabase();
+    this.config = config;
+  }
+
+  /**
+   * Update deduplication configuration
+   */
+  public setConfig(config: Partial<DedupConfig>): void {
+    this.config = {
+      ...this.config,
+      ...config,
+    };
   }
 
   /**
@@ -179,9 +211,63 @@ export class DedupProcessor {
   }
 
   /**
-   * Select canonical item from cluster members based on scoring
+   * Select canonical item from cluster members based on contextual scoring
+   * (UPGRADED VERSION with temporal & source awareness)
    */
-  private selectCanonicalItem(members: Array<ParsedItem & { itemId: string }>): ParsedItem & { itemId: string } {
+  private selectCanonicalItem(
+    members: Array<ParsedItem & { itemId: string }> | Array<ParsedItem & ContextualItem>
+  ): ParsedItem & { itemId: string } {
+    // Check if members have contextual info
+    const hasContextualInfo = members.length > 0 && 'contextualScore' in members[0];
+
+    if (hasContextualInfo) {
+      // Use new contextual scoring
+      return this.selectCanonicalWithContext(members as Array<ParsedItem & ContextualItem>);
+    } else {
+      // Fallback to old scoring for backward compatibility
+      return this.selectCanonicalLegacy(members);
+    }
+  }
+
+  /**
+   * Select canonical using contextual scoring (NEW)
+   */
+  private selectCanonicalWithContext(
+    members: Array<ParsedItem & ContextualItem>
+  ): ParsedItem & ContextualItem {
+    return members.reduce((best, current) => {
+      // Use pre-calculated contextual score
+      const currentScore = current.contextualScore;
+      const bestScore = best.contextualScore;
+
+      // Additional tie-breakers if scores are very close
+      if (Math.abs(currentScore - bestScore) < 0.01) {
+        // Prefer first reporter
+        if (current.isFirstReport && !best.isFirstReport) {
+          return current;
+        }
+
+        // Prefer more entities
+        if (current.entityCount > best.entityCount) {
+          return current;
+        }
+
+        // Prefer higher content quality
+        if (current.contentQuality > best.contentQuality) {
+          return current;
+        }
+      }
+
+      return currentScore > bestScore ? current : best;
+    });
+  }
+
+  /**
+   * Legacy canonical selection (FALLBACK for backward compatibility)
+   */
+  private selectCanonicalLegacy(
+    members: Array<ParsedItem & { itemId: string }>
+  ): ParsedItem & { itemId: string } {
     return members.reduce((best, current) => {
       const currentScore = this.calculateItemScore(current);
       const bestScore = this.calculateItemScore(best);
@@ -190,7 +276,7 @@ export class DedupProcessor {
   }
 
   /**
-   * Calculate item score for canonical selection
+   * Calculate item score for canonical selection (LEGACY)
    */
   private calculateItemScore(item: ParsedItem): number {
     let score = 0;
@@ -208,7 +294,7 @@ export class DedupProcessor {
 
     // Content completeness
     if (item.rawContext && item.rawContext.length > 50) score += 0.1;
-    
+
     // Entities bonus
     if ('entities' in item && item.entities && item.entities.length > 0) {
       score += Math.min(0.1, item.entities.length * 0.02);
@@ -333,5 +419,553 @@ export class DedupProcessor {
   async cleanup(): Promise<void> {
     await this.chromaService.deleteCollection();
     await this.db.close();
+  }
+
+  // ============================================================================
+  // TEMPORAL CONTEXT METHODS
+  // ============================================================================
+
+  /**
+   * Build temporal context for an item
+   */
+  private buildTemporalContext(
+    item: ParsedItem,
+    firstReportedAt?: Date
+  ): TemporalContext {
+    // Extract published date from item
+    // Assuming items have a publishedAt or timestamp field
+    const publishedAt = this.extractPublishedDate(item);
+    const discoveredAt = new Date(); // When we discovered this item
+
+    const now = new Date();
+    const itemAge = (now.getTime() - publishedAt.getTime()) / (1000 * 60 * 60); // hours
+
+    const timeWindow = determineTimeWindow(itemAge, this.config);
+    const storyPhase = determineStoryPhase(publishedAt, firstReportedAt, this.config);
+
+    return {
+      publishedAt,
+      discoveredAt,
+      timeWindow,
+      itemAge,
+      storyPhase,
+    };
+  }
+
+  /**
+   * Extract published date from item
+   */
+  private extractPublishedDate(item: ParsedItem): Date {
+    // Try to get from item metadata
+    if ('publishedAt' in item && item.publishedAt) {
+      return new Date(item.publishedAt as any);
+    }
+
+    // Try timestamp fields
+    if ('timestamp' in item && item.timestamp) {
+      return new Date(item.timestamp as any);
+    }
+
+    // Fallback to start time if available
+    if ('startTime' in item && item.startTime) {
+      // This is just a video timestamp, not actual publish date
+      // In real implementation, we'd get this from video metadata
+      return new Date(); // Default to now
+    }
+
+    // Default to current time
+    return new Date();
+  }
+
+  /**
+   * Build coverage timeline from cluster members
+   */
+  private buildCoverageTimeline(
+    members: Array<ParsedItem & { itemId: string }>
+  ): CoverageTimelineEntry[] {
+    const timeline: CoverageTimelineEntry[] = [];
+
+    for (const member of members) {
+      const publishedAt = this.extractPublishedDate(member);
+
+      timeline.push({
+        source: member.channelName || 'Unknown',
+        sourceId: member.channelId || 'unknown',
+        publishedAt,
+        itemId: member.itemId,
+        confidence: member.confidence || 'medium',
+        addedValue: this.analyzeAddedValue(member), // What new info this source contributed
+      });
+    }
+
+    // Sort by published date
+    timeline.sort((a, b) => a.publishedAt.getTime() - b.publishedAt.getTime());
+
+    return timeline;
+  }
+
+  /**
+   * Analyze what value/information this item added
+   */
+  private analyzeAddedValue(item: ParsedItem): string {
+    // Simple heuristic: check if it has unique entities or longer summary
+    if ('entities' in item && item.entities && item.entities.length > 0) {
+      return `Added entities: ${item.entities.slice(0, 3).join(', ')}`;
+    }
+
+    if ('summary' in item && item.summary) {
+      const wordCount = item.summary.split(' ').length;
+      if (wordCount > 50) {
+        return 'Comprehensive coverage';
+      } else if (wordCount > 30) {
+        return 'Detailed reporting';
+      } else {
+        return 'Brief coverage';
+      }
+    }
+
+    return 'Standard reporting';
+  }
+
+  /**
+   * Determine who reported first in a cluster
+   */
+  private findFirstReporter(
+    members: Array<ParsedItem & { itemId: string }>
+  ): { sourceId: string; publishedAt: Date } {
+    let firstItem = members[0];
+    let earliestDate = this.extractPublishedDate(firstItem);
+
+    for (const member of members) {
+      const publishedAt = this.extractPublishedDate(member);
+      if (publishedAt.getTime() < earliestDate.getTime()) {
+        earliestDate = publishedAt;
+        firstItem = member;
+      }
+    }
+
+    return {
+      sourceId: firstItem.channelId || 'unknown',
+      publishedAt: earliestDate,
+    };
+  }
+
+  /**
+   * Calculate source diversity in a cluster
+   */
+  private calculateSourceDiversity(
+    members: Array<ParsedItem & { itemId: string }>
+  ): number {
+    const uniqueSources = new Set(members.map(m => m.channelId || 'unknown'));
+    // Normalize by cluster size (max diversity = 1.0 when all different sources)
+    return Math.min(1.0, uniqueSources.size / members.length);
+  }
+
+  // ============================================================================
+  // SOURCE REPUTATION & SCORING METHODS
+  // ============================================================================
+
+  /**
+   * Get source reputation from database (or calculate on-the-fly)
+   */
+  private async getSourceReputation(sourceId: string): Promise<SourceReputation> {
+    try {
+      // Try to get from database first
+      const rows = await this.db.query(
+        `SELECT
+          id as sourceId,
+          name as sourceName,
+          weight as reliabilityScore,
+          type,
+          active
+        FROM sources
+        WHERE id = ?`,
+        [sourceId]
+      );
+
+      if (rows.length > 0) {
+        const source = rows[0];
+
+        // Calculate additional metrics from historical data
+        const stats = await this.calculateSourceStats(sourceId);
+
+        return {
+          sourceId: source.sourceId,
+          sourceName: source.sourceName,
+          reliabilityScore: source.reliabilityScore || 0.5,
+          avgResponseTime: stats.avgResponseTime,
+          specialization: stats.specialization,
+          historicalAccuracy: stats.historicalAccuracy,
+          totalItemsPublished: stats.totalItemsPublished,
+          firstReportCount: stats.firstReportCount,
+        };
+      }
+    } catch (error) {
+      console.warn(`⚠️ Could not get source reputation for ${sourceId}:`, error);
+    }
+
+    // Default reputation for unknown sources
+    return {
+      sourceId,
+      sourceName: 'Unknown Source',
+      reliabilityScore: 0.5, // Neutral score
+      avgResponseTime: 24, // Assume 24h average
+      specialization: [],
+      historicalAccuracy: 0.5,
+      totalItemsPublished: 0,
+      firstReportCount: 0,
+    };
+  }
+
+  /**
+   * Calculate source statistics from historical data
+   */
+  private async calculateSourceStats(
+    sourceId: string
+  ): Promise<{
+    avgResponseTime: number;
+    specialization: string[];
+    historicalAccuracy: number;
+    totalItemsPublished: number;
+    firstReportCount: number;
+  }> {
+    // This would query historical data - simplified for now
+    // In real implementation, we'd analyze:
+    // - How quickly they report news
+    // - What topics they cover most
+    // - Validation success rate
+    // - How often they're first
+
+    return {
+      avgResponseTime: 12, // hours
+      specialization: ['ai', 'tech'], // Default
+      historicalAccuracy: 0.75, // 75% pass validation
+      totalItemsPublished: 100, // Placeholder
+      firstReportCount: 20, // Placeholder
+    };
+  }
+
+  /**
+   * Calculate contextual score for canonical selection
+   */
+  private async calculateContextualScore(
+    item: ParsedItem & { itemId: string },
+    reputation: SourceReputation,
+    temporalContext: TemporalContext,
+    isFirstReport: boolean
+  ): Promise<number> {
+    let score = 0;
+
+    // 1. Source reputation weight (30%)
+    score += reputation.reliabilityScore * this.config.scoring.sourceReputationWeight;
+
+    // 2. Recency bonus (20%)
+    const recencyBonus = calculateRecencyBonus(temporalContext.itemAge, this.config);
+    score += recencyBonus * this.config.scoring.recencyWeight;
+
+    // 3. Content quality (30%)
+    const contentQuality = this.calculateContentQuality(item);
+    score += contentQuality * this.config.scoring.contentQualityWeight;
+
+    // 4. First-to-report bonus (20%)
+    if (isFirstReport) {
+      score += this.config.scoring.firstReportWeight;
+    }
+
+    return Math.min(1.0, score); // Cap at 1.0
+  }
+
+  /**
+   * Calculate content quality score (0-1)
+   */
+  private calculateContentQuality(item: ParsedItem): number {
+    let score = 0.5; // Base score
+
+    // Confidence bonus
+    if (item.confidence === 'very_high') score += 0.2;
+    else if (item.confidence === 'high') score += 0.15;
+    else if (item.confidence === 'medium') score += 0.05;
+
+    // Raw context completeness
+    if (item.rawContext) {
+      const contextLength = item.rawContext.length;
+      if (contextLength > 200) score += 0.15;
+      else if (contextLength > 100) score += 0.1;
+      else if (contextLength > 50) score += 0.05;
+    }
+
+    // Entity richness
+    if ('entities' in item && item.entities) {
+      const entityCount = item.entities.length;
+      score += Math.min(0.15, entityCount * 0.03);
+    }
+
+    // Summary completeness
+    if ('summary' in item && item.summary) {
+      const wordCount = item.summary.split(' ').length;
+      if (wordCount > 50) score += 0.1;
+      else if (wordCount > 30) score += 0.05;
+    }
+
+    return Math.min(1.0, score); // Cap at 1.0
+  }
+
+  /**
+   * Enrich items with contextual information
+   */
+  private async enrichItemsWithContext(
+    items: Array<ParsedItem & { itemId: string }>,
+    firstReportedAt: Date
+  ): Promise<Array<ParsedItem & ContextualItem>> {
+    const enrichedItems: Array<ParsedItem & ContextualItem> = [];
+
+    for (const item of items) {
+      // Get source reputation
+      const sourceReputation = await this.getSourceReputation(item.channelId || 'unknown');
+
+      // Build temporal context
+      const publishedAt = this.extractPublishedDate(item);
+      const temporalContext = this.buildTemporalContext(item, firstReportedAt);
+
+      // Determine if this was first report
+      const isFirstReport = publishedAt.getTime() === firstReportedAt.getTime();
+
+      // Calculate contextual score
+      const contextualScore = await this.calculateContextualScore(
+        item,
+        sourceReputation,
+        temporalContext,
+        isFirstReport
+      );
+
+      // Calculate content quality
+      const contentQuality = this.calculateContentQuality(item);
+
+      // Count entities
+      const entityCount = 'entities' in item && item.entities ? item.entities.length : 0;
+
+      enrichedItems.push({
+        ...item,
+        sourceReputation,
+        isFirstReport,
+        temporalPhase: temporalContext.storyPhase,
+        contextualScore,
+        entityCount,
+        contentQuality,
+      });
+    }
+
+    return enrichedItems;
+  }
+
+  // ============================================================================
+  // CROSS-RUN DEDUPLICATION (Historical Matching)
+  // ============================================================================
+
+  /**
+   * Deduplicate new items against historical items
+   */
+  async deduplicateAgainstHistory(
+    items: ParsedItem[],
+    lookbackDays: number = 30
+  ): Promise<{
+    newItems: ParsedItem[];
+    duplicatesOfHistory: Array<{
+      newItem: ParsedItem;
+      historicalClusterId: string;
+      similarity: number;
+    }>;
+  }> {
+    if (!this.config.features.enableCrossRunDedup) {
+      console.log('⏭️ Cross-run dedup disabled');
+      return {
+        newItems: items,
+        duplicatesOfHistory: [],
+      };
+    }
+
+    console.log(`🔍 Checking ${items.length} items against historical data (${lookbackDays} days)`);
+
+    const newItems: ParsedItem[] = [];
+    const duplicatesOfHistory: Array<{
+      newItem: ParsedItem;
+      historicalClusterId: string;
+      similarity: number;
+    }> = [];
+
+    const lookbackDate = new Date();
+    lookbackDate.setDate(lookbackDate.getDate() - lookbackDays);
+
+    for (const item of items) {
+      // Generate embedding for item
+      const textContent = this.extractTextContent(item);
+      const embedding = await this.embeddingService.generateEmbedding(textContent);
+
+      // Search for similar historical items
+      const historicalMatches = await this.findHistoricalMatches(
+        embedding,
+        textContent,
+        lookbackDate
+      );
+
+      if (historicalMatches.length > 0) {
+        // Found historical match
+        const bestMatch = historicalMatches[0];
+
+        if (bestMatch.similarity >= this.config.similarity.historicalThreshold) {
+          console.log(`   📎 Item matches historical cluster (${(bestMatch.similarity * 100).toFixed(1)}%)`);
+
+          duplicatesOfHistory.push({
+            newItem: item,
+            historicalClusterId: bestMatch.clusterId,
+            similarity: bestMatch.similarity,
+          });
+
+          // Log historical dedup action
+          await this.logHistoricalDedupAction(
+            item,
+            bestMatch.clusterId,
+            bestMatch.similarity,
+            'marked_duplicate'
+          );
+        } else {
+          // Similarity below threshold - treat as new
+          newItems.push(item);
+        }
+      } else {
+        // No historical match - new item
+        newItems.push(item);
+      }
+    }
+
+    console.log(`   ✅ ${newItems.length} new items, ${duplicatesOfHistory.length} historical duplicates`);
+
+    return {
+      newItems,
+      duplicatesOfHistory,
+    };
+  }
+
+  /**
+   * Find historical matches for an item
+   */
+  private async findHistoricalMatches(
+    embedding: number[],
+    textContent: string,
+    sinceDate: Date
+  ): Promise<Array<{ clusterId: string; similarity: number }>> {
+    try {
+      // Query historical embeddings
+      const rows = await this.db.query(
+        `SELECT
+          cluster_id as clusterId,
+          embedding_vector as embeddingVector,
+          text_content as textContent,
+          canonical_key as canonicalKey
+        FROM item_embeddings_persistent
+        WHERE published_at >= ?
+          AND cluster_id IS NOT NULL
+        ORDER BY published_at DESC
+        LIMIT 100`,
+        [sinceDate.toISOString()]
+      );
+
+      const matches: Array<{ clusterId: string; similarity: number }> = [];
+
+      for (const row of rows) {
+        // Parse embedding
+        const historicalEmbedding = JSON.parse(row.embeddingVector || '[]');
+
+        if (historicalEmbedding.length === 0) {
+          continue;
+        }
+
+        // Calculate cosine similarity
+        const similarity = this.embeddingService.cosineSimilarity(embedding, historicalEmbedding);
+
+        matches.push({
+          clusterId: row.clusterId,
+          similarity,
+        });
+      }
+
+      // Sort by similarity (highest first)
+      matches.sort((a, b) => b.similarity - a.similarity);
+
+      return matches.slice(0, 5); // Return top 5 matches
+    } catch (error) {
+      console.warn('⚠️ Error finding historical matches:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Save item embedding persistently for future cross-run dedup
+   */
+  async saveItemEmbeddingPersistently(
+    itemId: string,
+    embedding: number[],
+    item: ParsedItem,
+    clusterId?: string
+  ): Promise<void> {
+    try {
+      const textContent = this.extractTextContent(item);
+      const canonicalKey = this.embeddingService.generateCanonicalKey(item);
+      const publishedAt = this.extractPublishedDate(item);
+
+      // Extract entity list
+      const entities = 'entities' in item && item.entities ? item.entities : [];
+
+      await this.db.run(
+        `INSERT OR REPLACE INTO item_embeddings_persistent (
+          item_id, embedding_vector, canonical_key, text_content,
+          source_id, channel_id, channel_name, published_at, cluster_id,
+          entity_list
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          itemId,
+          JSON.stringify(embedding),
+          canonicalKey,
+          textContent,
+          item.sourceId || null,
+          item.channelId || null,
+          item.channelName || null,
+          publishedAt.toISOString(),
+          clusterId || null,
+          JSON.stringify(entities),
+        ]
+      );
+    } catch (error) {
+      console.warn(`⚠️ Failed to save persistent embedding for ${itemId}:`, error);
+    }
+  }
+
+  /**
+   * Log historical deduplication action
+   */
+  private async logHistoricalDedupAction(
+    item: ParsedItem,
+    historicalClusterId: string,
+    similarity: number,
+    action: 'merged' | 'marked_duplicate' | 'kept_separate'
+  ): Promise<void> {
+    try {
+      const itemId = 'itemId' in item ? (item as any).itemId : `temp_${Date.now()}`;
+
+      await this.db.run(
+        `INSERT INTO historical_dedup_actions (
+          new_item_id, historical_cluster_id, similarity_score, action, reason
+        ) VALUES (?, ?, ?, ?, ?)`,
+        [
+          itemId,
+          historicalClusterId,
+          similarity,
+          action,
+          `Similarity: ${(similarity * 100).toFixed(1)}%`,
+        ]
+      );
+    } catch (error) {
+      console.warn('⚠️ Failed to log historical dedup action:', error);
+    }
   }
 }
