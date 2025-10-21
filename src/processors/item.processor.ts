@@ -9,7 +9,8 @@ import { getDatabase } from '../db/database.js';
 export interface VideoMetadata {
   id: string;
   title: string;
-  channelId: string;
+  sourceId: string;     // Internal database source ID (for lookups)
+  channelId: string;    // YouTube channel ID (for schema/metadata)
   channelName: string;
   duration: number;
   publishedAt: Date;
@@ -44,9 +45,9 @@ export class ItemProcessor {
     
     try {
       // Get source information to determine processing type
-      const sourceInfo = await this.getSourceInfo(video.channelId);
+      const sourceInfo = await this.getSourceInfo(video.sourceId);
       if (!sourceInfo) {
-        throw new Error(`Source not found for source ID: ${video.channelId}`);
+        throw new Error(`Source not found for internal source ID: ${video.sourceId}`);
       }
 
       // Check if already processed

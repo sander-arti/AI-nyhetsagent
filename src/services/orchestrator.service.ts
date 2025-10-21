@@ -250,7 +250,8 @@ export class OrchestratorService {
         const videoMetadata = {
           id: video.id,
           title: video.title,
-          channelId: video.channelId, // YouTube channel ID (not sourceId which is internal DB ID)
+          sourceId: video.sourceId,      // Internal database source ID (for lookup)
+          channelId: video.channelId,    // YouTube channel ID (for schema)
           channelName: video.channelTitle,
           duration: video.durationSeconds || video.duration,
           publishedAt: new Date(video.publishedAt),
