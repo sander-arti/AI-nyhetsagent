@@ -250,11 +250,11 @@ export class OrchestratorService {
         const videoMetadata = {
           id: video.id,
           title: video.title,
-          channelId: video.sourceId,
+          channelId: video.channelId, // YouTube channel ID (not sourceId which is internal DB ID)
           channelName: video.channelTitle,
-          duration: video.duration,
+          duration: video.durationSeconds || video.duration,
           publishedAt: new Date(video.publishedAt),
-          url: `https://www.youtube.com/watch?v=${video.id}`
+          url: video.url || `https://www.youtube.com/watch?v=${video.id}`
         };
 
         const result = await this.itemProcessor.processVideo(

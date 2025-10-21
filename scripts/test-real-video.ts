@@ -49,11 +49,16 @@ async function testRealVideo() {
   const startTime = Date.now();
 
   const parseRequest = {
-    transcript,
+    transcript: {
+      ...transcript,
+      videoId: video.video_id
+    },
     sourceType: 'news' as const,
     videoMetadata: {
       title: video.title,
       channelName: 'Test',
+      channelId: 'UC_test_channel',
+      sourceUrl: video.url || `https://www.youtube.com/watch?v=${video.video_id}`,
       duration: video.duration_seconds,
       publishedAt: new Date(video.published_at)
     }

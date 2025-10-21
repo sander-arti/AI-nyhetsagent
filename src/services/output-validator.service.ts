@@ -65,9 +65,18 @@ export class OutputValidatorService {
     const warnings: string[] = [];
     let confidenceAdjustment = 0;
 
+    // Log item being validated
+    const itemTitle = item?.title || item?.topic || 'Unknown';
+    console.log(`\n🔍 Validating item: "${itemTitle.substring(0, 60)}${itemTitle.length > 60 ? '...' : ''}"`);
+
     // 1. Schema validation (Zod)
+    console.log(`  📋 Step 1: Schema validation...`);
     const schemaValidation = validateItem(item, sourceType);
     if (!schemaValidation.valid) {
+      console.log(`  ❌ Schema validation FAILED:`);
+      schemaValidation.errors?.forEach((err, i) => {
+        console.log(`     ${i + 1}. ${err}`);
+      });
       errors.push(...(schemaValidation.errors || []));
       return {
         item,
@@ -86,16 +95,22 @@ export class OutputValidatorService {
         ]
       };
     }
+    console.log(`  ✅ Schema validation PASSED`);
 
     const validatedItem = schemaValidation.item!;
 
-    // 2. RawContext validation
+    // 2. RawContext length validation
+    console.log(`  📏 Step 2: RawContext length check...`);
     if (!validatedItem.rawContext || validatedItem.rawContext.length < 20) {
+      console.log(`  ❌ rawContext too short: ${validatedItem.rawContext?.length || 0} chars (min 20)`);
       errors.push('rawContext is too short or missing');
       confidenceAdjustment -= 0.3;
+    } else {
+      console.log(`  ✅ rawContext length OK: ${validatedItem.rawContext.length} chars`);
     }
 
     // 3. Entity verification - check if entities actually appear in rawContext
+    console.log(`  🏷️  Step 3: Entity verification...`);
     if ('entities' in validatedItem && validatedItem.entities) {
       const missingEntities = this.verifyEntities(
         validatedItem.entities,
@@ -104,18 +119,27 @@ export class OutputValidatorService {
       );
 
       if (missingEntities.length > 0) {
+        console.log(`  ⚠️  Entities not found in context: ${missingEntities.join(', ')}`);
         warnings.push(`Entities not found in context: ${missingEntities.join(', ')}`);
         confidenceAdjustment -= 0.2 * (missingEntities.length / validatedItem.entities.length);
+      } else {
+        console.log(`  ✅ All ${validatedItem.entities.length} entities verified`);
       }
+    } else {
+      console.log(`  ℹ️  No entities to verify`);
     }
 
     // 4. Verify rawContext exists in transcript
+    console.log(`  🔎 Step 4: RawContext transcript match...`);
     if (!this.contextExistsInTranscript(validatedItem.rawContext, chunk.text)) {
+      console.log(`  ❌ rawContext NOT found in transcript - possible hallucination`);
       errors.push('rawContext does not appear in transcript - possible hallucination');
       confidenceAdjustment -= 0.5;
     }
+    // Note: contextExistsInTranscript already logs success/failure details
 
     // 5. Check timestamp validity
+    console.log(`  ⏱️  Step 5: Timestamp validation...`);
     if (validatedItem.timestamp) {
       const timestampValidation = this.validateTimestamp(
         validatedItem.timestamp,
@@ -123,29 +147,63 @@ export class OutputValidatorService {
         chunk.endTime
       );
       if (!timestampValidation.valid) {
+        console.log(`  ⚠️  ${timestampValidation.error}`);
         warnings.push(timestampValidation.error!);
         confidenceAdjustment -= 0.1;
+      } else {
+        console.log(`  ✅ Timestamp OK: ${validatedItem.timestamp}`);
       }
+    } else {
+      console.log(`  ℹ️  No timestamp to validate`);
     }
 
     // 6. Content length checks
+    console.log(`  📝 Step 6: Content length validation...`);
     const lengthValidation = this.validateContentLengths(validatedItem, sourceType);
     if (!lengthValidation.valid) {
+      console.log(`  ⚠️  Content length issues:`);
+      lengthValidation.warnings.forEach((warn, i) => {
+        console.log(`     ${i + 1}. ${warn}`);
+      });
       warnings.push(...lengthValidation.warnings);
       confidenceAdjustment -= 0.1;
+    } else {
+      console.log(`  ✅ Content lengths OK`);
     }
 
     // 7. Relevance score sanity check
+    console.log(`  🎯 Step 7: Relevance score validation...`);
     if (validatedItem.relevance_score) {
       const relevanceCheck = this.validateRelevanceScore(validatedItem, sourceType);
       if (!relevanceCheck.valid) {
+        console.log(`  ⚠️  ${relevanceCheck.warning}`);
         warnings.push(relevanceCheck.warning!);
         confidenceAdjustment -= 0.05;
+      } else {
+        console.log(`  ✅ Relevance score OK: ${validatedItem.relevance_score}/10`);
       }
+    } else {
+      console.log(`  ℹ️  No relevance score to validate`);
     }
 
     // 8. Type-specific validation
+    console.log(`  🔧 Step 8: Type-specific validation (${sourceType})...`);
     const typeValidation = this.validateTypeSpecific(validatedItem, sourceType, chunk);
+    if (typeValidation.errors.length > 0) {
+      console.log(`  ❌ Type-specific errors:`);
+      typeValidation.errors.forEach((err, i) => {
+        console.log(`     ${i + 1}. ${err}`);
+      });
+    }
+    if (typeValidation.warnings.length > 0) {
+      console.log(`  ⚠️  Type-specific warnings:`);
+      typeValidation.warnings.forEach((warn, i) => {
+        console.log(`     ${i + 1}. ${warn}`);
+      });
+    }
+    if (typeValidation.errors.length === 0 && typeValidation.warnings.length === 0) {
+      console.log(`  ✅ Type-specific validation passed`);
+    }
     errors.push(...typeValidation.errors);
     warnings.push(...typeValidation.warnings);
     confidenceAdjustment += typeValidation.confidenceAdjustment;
@@ -160,13 +218,31 @@ export class OutputValidatorService {
       validatedItem
     ) : undefined;
 
+    // Final validation summary
+    const isValid = errors.length === 0;
+    const isPerfect = errors.length === 0 && warnings.length === 0 && confidenceAdjustment >= 0;
+
+    console.log(`\n  📊 Validation Result:`);
+    console.log(`     Valid: ${isValid ? '✅ YES' : '❌ NO'}`);
+    console.log(`     Errors: ${errors.length}`);
+    console.log(`     Warnings: ${warnings.length}`);
+    console.log(`     Confidence adjustment: ${confidenceAdjustment.toFixed(2)}`);
+    console.log(`     Should retry: ${shouldRetry ? 'YES' : 'NO'}`);
+
+    if (!isValid) {
+      console.log(`\n  ❌ FAILED - Errors that prevented validation:`);
+      errors.forEach((err, i) => {
+        console.log(`     ${i + 1}. ${err}`);
+      });
+    }
+
     return {
       item: validatedItem,
       validation: {
-        isValid: errors.length === 0,
+        isValid,
         errors,
         warnings,
-        perfectMatch: errors.length === 0 && warnings.length === 0 && confidenceAdjustment >= 0,
+        perfectMatch: isPerfect,
         confidenceAdjustment
       },
       shouldRetry,

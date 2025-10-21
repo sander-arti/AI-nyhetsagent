@@ -34,6 +34,8 @@ export interface ParseRequest {
   videoMetadata: {
     title: string;
     channelName: string;
+    channelId: string;
+    sourceUrl: string;
     duration: number;
     publishedAt: Date;
   };
@@ -409,11 +411,19 @@ export class LLMService {
 
       // Validate extracted items
       if (parsed.items && Array.isArray(parsed.items) && parsed.items.length > 0) {
+        // Add metadata fields to each item before validation
+        const itemsWithMetadata = parsed.items.map((item: any) => ({
+          ...item,
+          videoId: request.transcript.videoId,
+          channelId: request.videoMetadata.channelId,
+          sourceUrl: request.videoMetadata.sourceUrl
+        }));
+
         // Set validation mode based on retry attempt (adaptive thresholds)
         this.validator.setValidationMode(retryAttempt);
 
         const validationResults = await this.validator.validateExtractedItems(
-          parsed.items,
+          itemsWithMetadata,
           chunk,
           request.sourceType
         );

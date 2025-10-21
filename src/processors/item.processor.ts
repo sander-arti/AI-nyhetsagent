@@ -63,6 +63,8 @@ export class ItemProcessor {
         videoMetadata: {
           title: video.title,
           channelName: video.channelName,
+          channelId: video.channelId,
+          sourceUrl: video.url,
           duration: video.duration,
           publishedAt: video.publishedAt
         }
